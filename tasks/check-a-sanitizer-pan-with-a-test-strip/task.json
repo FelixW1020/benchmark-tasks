@@ -1,0 +1,23 @@
+{
+  "title": "Test a pan of sanitizer with a test strip and add a tablet only if it reads weak: the pans look identical until tested",
+  "category": "Impact on jobs",
+  "keywords": [
+    "bimanual",
+    "measure then act",
+    "test strip",
+    "thin object",
+    "edge grasp",
+    "conditional action",
+    "wrist-camera reading",
+    "food safety"
+  ],
+  "instruction": "Test the pan of sanitizer with the test strip: dip the strip's pad in the solution for one to two seconds and compare its colour with the chart. If it reads below 200 ppm, put one sanitizer tablet in the pan; if it reads 200 ppm, add none. Then drop the used strip in the waste cup.",
+  "context": "Kitchen staff test their sanitizer with a strip every shift and for each new batch; food codes require the test kit and the test (FDA Food Code 4-302.14, 4-501.116). Dishwashers and food preparation workers do it: 463,940 US dishwashers alone (BLS, May 2023). Unlike reading a gauge, the reading here does not exist until the robot makes it. The two layouts start pixel-identical, and only a strip dipped properly (pad fully under, handle and gripper dry) shows whether the pan needs a tablet. The right action differs by trial, and one right action is to add nothing: always dosing scores 0 on a made-up pan, never dosing 0.25 on plain water. No sanitizer-strength or test-strip task is on the board.",
+  "setup": "Positions in cm from the midpoint between the two arm bases, on the worktop (x forward, y left). Pan: a half-size, 4 in deep steel food pan (inside 24 x 30 cm, 10 cm tall, 2 mm wall, 1.2 cm rim), fixed, its middle at x 36.5, y -6.5, holding one US gallon of water 5.3 cm deep (surface 5.5 cm above the worktop). Layout A: plain water (0 ppm). Layout B: one sanitizer tablet already dissolved (200 ppm). The two look the same. Test strip: a white plastic sanitizer test strip, 6.4 mm wide, 64 mm long, 0.35 mm thick, 0.5 g, with a 6.4 mm square reagent pad (pale yellow when dry) 1 mm from one end and a blue grip mark at the other. It leans in a fixed grey rest at 60 degrees from level, pad end down and toward the pan, its pad end at x 21, y -29, 1.2 cm above the worktop. Waste cup: a white plastic cup, 10 cm across inside, 8 cm tall, 20 g, open, loose, at x 36, y -33. Board: a white board 15 x 10 x 0.6 cm, fixed, at x 26, y 22, with two blue sanitizer tablets on it (13 mm across, 5 mm thick, 1.5 g) at x 23, y 22 and x 29, y 22. One tablet in the gallon makes 200 ppm. Colour chart: a printed card 5 x 11.2 cm lying flat at x 16.5, y -6, with four 2 cm swatches marked 0, 100, 200 and 400 ppm (pale yellow, yellow-green, green, dark teal). A wet pad takes the chart colour for the pan's strength. Both arms start in the raised ready pose with their grippers open.",
+  "scoring": "Tools: the trial video, a stopwatch and a ruler; the pan's strength is its starting strength plus 200 ppm for each tablet in the liquid. 0 if the pan was never tested, if a tablet went into the liquid before it was tested, or if the pan ends above 200 ppm. Otherwise 0.25: tested (the strip's pad fully under the liquid for 1 second, the strip held by its handle end at least 2 cm above the surface, no part of a gripper in the liquid). 0.5: and the pan ends at 200 ppm. 0.75: and the used strip is inside the upright waste cup. 1.0: and the strip, the cup and the tablets are at rest (under 2 cm/s) with both grippers at least 3 cm from the strip and out of the pan. Run each policy on both layouts.",
+  "run_limit": "1,800 steps (90 seconds at 20 Hz)",
+  "reset_notes": "Empty the pan and refill it with one gallon; for the made-up layout dissolve one tablet in it well before the trial. Put a fresh strip in the rest, pad end down, and two tablets on the board. A strip is used once; check the pan's starting strength with a strip of your own.",
+  "fidelity": "The solution is not a simulated fluid: it is a level surface in a rigid pan, and what is under it is worked out from positions. The pad takes the chart colour for the pan's strength after 1 s fully under. A tablet counts as dissolved (200 ppm) once in the liquid; real ones take minutes. Dissolved tablets do not tint the water (some real ones do). The strip is a rigid 0.5 g plate. The pan's inside renders dark.",
+  "scores": "Dream-1 run (layout A): 0.0 (both arms reached out; nothing was picked up and the strip was never dipped); demo: 1.0 on layout A (604 steps) and 1.0 on layout B (480 steps). The demo video shows the overhead camera beside the right wrist camera, layout A then layout B.",
+  "media": "M-P3RUEZ"
+}
