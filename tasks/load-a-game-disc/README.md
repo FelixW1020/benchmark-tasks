@@ -1,13 +1,17 @@
-# Take a game disc out of its case and load it into a slot-loading console
+# Open a game case, take the disc out and load it into a slot-loading console
 
 A games console stands upright on the table, with a slot-loading disc drive whose slot is in its front face. Beside
-it, a game case lies open on a storage box with the game's disc on its hub. The robot has to take the disc out of
-the case and put it into the console.
+it, a game case lies shut on a storage box with the game's disc inside. The robot has to open the case, take the disc
+out and put it into the console.
 
-**Instruction:** "Take the game disc out of its case and put it into the console."
+**Instruction:** "Open the game case, take the disc out and put it into the console."
 
-Two real mechanisms make this a two-handed, millimetre-precise job:
+Three real mechanisms make this a two-handed, millimetre-precise job:
 
+- **The case's catch.** A game case snaps shut. Here the catch lets go when the cover's lip is pulled up with 1.2 N.
+  The whole case with its disc weighs 86 g, so a pull of 0.42 N at the lip already lifts that edge of the case off the
+  box: pulling the lip alone picks the case up, still shut. One hand has to hold the tray half down while the other
+  lifts the cover's lip. The cover then has to be swung up and over the spine to lie open beyond the case.
 - **The case's hub.** A game case holds its disc on a hub with spring teeth that grip the edge of the disc's centre
   hole. The disc comes off only while the hub's centre button is pressed, which draws the teeth in. Lifting the disc
   without pressing the button just lifts the whole case with it (and with a real disc, risks cracking it). So one
@@ -22,16 +26,19 @@ which the case's thumb cut-out leaves free, and it has to be turned from lying f
 ## Where this comes up
 
 - **Home entertainment.** Loading a game, film or music disc is an everyday task in homes with games consoles,
-  Blu-ray players and car stereos with slot-loading drives.
-- **Care and assistance.** People with limited hand function find the press-the-hub-and-lift step and lining a disc
-  up with a slot difficult; it is a typical small request for a home-assistance robot.
+  Blu-ray players and car stereos with slot-loading drives, and it always starts with a shut case.
+- **Care and assistance.** People with limited hand function find opening a snapped-shut case, the
+  press-the-hub-and-lift step and lining a disc up with a slot difficult; it is a typical small request for a
+  home-assistance robot.
 - **Media handling in offices and libraries.** Libraries lend discs in the same cases, and archives load discs into
   slot and tray drives for reading.
 
 ## Potential impact
 
-- **Two hands with different jobs on one small object.** One hand presses a 12 mm button on the hub while the other
-  lifts a 1.2 mm disc by its edge a few centimetres away.
+- **Opening a light snap-shut package.** The force that opens the catch is three times the force that lifts the
+  package, so the hold and the pull have to happen together, a few centimetres apart.
+- **Two hands with different jobs on one small object,** twice: holding the tray while lifting the cover, and
+  pressing a 12 mm button on the hub while lifting a 1.2 mm disc by its edge.
 - **Handling a thin, wide, fragile object by its edge,** and turning it from flat to upright in the fingers.
 - **Millimetre alignment for insertion.** The slot leaves under 2 mm either side of the disc; a disc a few degrees
   off square catches the console's face.
@@ -40,10 +47,10 @@ which the case's thumb cut-out leaves free, and it has to be turned from lying f
 
 | File | What it is |
 |---|---|
-| `task.py` | The task file: scene, the hub's teeth, the console's drive, scoring, the instruction |
-| `disckit.py` | Builds the disc, the case (an articulation: case, hub button on a sprung slide, three teeth on radial slides) and the fixed parts |
-| `demo.py` | The scripted demo, and a control run (lifting without pressing the hub) |
-| `test_scoring.py` | Offline tests of the scoring rule and the disc geometry (no simulator) |
+| `task.py` | The task file: scene, the case's catch, the hub's teeth, the console's drive, scoring, the instruction |
+| `disckit.py` | Builds the disc, the case (an articulation: tray, spine and cover on two hinges, hub button on a sprung slide, three teeth on radial slides) and the fixed parts |
+| `demo.py` | The scripted demo, and its control runs |
+| `test_scoring.py` | Offline tests of the scoring rule, the catch and the disc geometry (no simulator) |
 | `task.json` | The submission's details |
 
 ## Requirements
@@ -56,7 +63,7 @@ needed). `test_scoring.py` needs only Python with numpy, pytest and the `yam_are
 ```bash
 inspect-robots run --embodiment yam_arena --policy dream \
   -E task=task.py -E object_jitter=0 -E control_hz=20 -E cam_width=320 -E cam_height=176 \
-  --instruction "Take the game disc out of its case and put it into the console." \
+  --instruction "Open the game case, take the disc out and put it into the console." \
   --scorer task_score --max-steps 2400
 ```
 
@@ -66,21 +73,29 @@ Run limit: 2,400 steps (2 minutes at 20 Hz). Second layout: set `DISC_LOT=B` in 
 
 ```bash
 python demo.py task.py out_dir                  # layout A; DISC_LOT=B for layout B
-python demo.py task.py out_dir --mode nopress   # control: lift the disc without pressing the hub
+python demo.py task.py out_dir --mode nohold    # control: lift the cover's lip without holding the tray down
+python demo.py task.py out_dir --mode open      # control: open the case and stop
+python demo.py task.py out_dir --mode nopress   # control: open the case, then lift the disc without pressing the hub
 ```
 
-1. The left hand comes straight down on the hub, fingers closed, and presses its centre button 2.5 mm: the teeth draw
+1. The left hand, closed and leaning out to its own side, presses its fingertips on the tray's finger ledge, which
+   shows through the recess in the cover's left edge: it holds the case down.
+2. The right hand, level and closed, slides its fingertips under the cover's lip at the tray's thumb cut-out and
+   lifts. The catch lets go. The left hand lets go of the ledge and moves clear.
+3. The right hand raises the cover to 60 degrees. The left hand comes in level under the raised cover, takes it from
+   the right hand, and pushes it up and over the spine. The cover falls open and lies flat beyond the case.
+4. The left hand comes straight down on the hub, fingers closed, and presses its centre button 2.5 mm: the teeth draw
    in.
-2. The right hand, level and pointing forward with its fingers one above the other, reaches through the case's thumb
-   cut-out and pinches the disc's edge (18 mm of it), then lifts the disc 1.5 cm straight up off the hub. The left
+5. The right hand, level and pointing forward with its fingers one above the other, reaches through the case's thumb
+   cut-out and pinches the disc's edge (18 mm of it), then lifts the disc straight up off the hub's teeth. The left
    hand lets go of the button.
-3. The right hand carries the disc, still flat, in front of the console and turns its wrist a quarter turn: the disc
-   stands upright, square to the slot.
-4. It slides the disc straight into the slot. Once 7 cm is in, the drive takes it; the hand lets go and backs away,
+6. The right hand lifts the disc clear of the hub, carries it, still flat, in front of the console and turns its
+   wrist a quarter turn: the disc stands upright, square to the slot.
+7. It slides the disc straight into the slot. Once 7 cm is in, the drive takes it; the hand lets go and backs away,
    and the drive draws the disc in.
 
 The script is open loop: every pose comes from the layout constants in `task.py`, and object states are read only for
-the result file.
+the result file. It does not read the catch's state: the hands move on a fixed schedule.
 
 ## Scoring
 
@@ -90,44 +105,57 @@ Tools: the trial video and a ruler.
 - Otherwise:
   - **1.0** once the drive has taken the disc: it went in upright (within 10 degrees), centred in the slot (within
     2.5 mm across it and 12 mm up or down) and 7 cm deep, and was drawn in;
-  - **0.5** if the disc went at least 2 cm into the slot;
-  - **0.25** if the disc came off the hub (its centre 1 cm or more from its place on the hub);
-  - **0** otherwise.
+  - **0.75** if the disc went at least 2 cm into the slot;
+  - **0.5** if the disc came off the hub (its centre 1 cm or more from its place on the hub);
+  - **0.25** if the case was opened where it lies (its cover swung upright, 90 degrees from shut, or further, while
+    its tray half lay flat on the box, within 20 degrees and 1 cm);
+  - **0** otherwise. Freeing the catch without swinging the cover open earns nothing.
 
-In code: `_watch()` (the teeth, the drive and what happened during the trial) and `score()` in `task.py`. The teeth
-draw in while the button is pressed 1.5 mm or more.
+In code: `_watch()` (the catch, the teeth, the drive and what happened during the trial) and `score()` in `task.py`.
+The catch lets go once the cover has turned 1.5 degrees (3.7 mm at the lip) against its spring. The teeth draw in
+while the button is pressed 1.5 mm or more.
 
 ## Verification
 
 | Run | Score | Notes |
 |---|---|---|
-| Scripted demo, layout A | 1.0 | Disc drawn in by the drive at step 475 (24 s) |
-| Scripted demo, layout B | 1.0 | Same script; step 476 |
-| Control: lift without pressing the hub | 0.0 | The teeth held the disc on the hub; it never came off |
-| Dream-1, 2,400 steps | 0.0 | Both arms stayed near their bases, grippers half open; neither reached the case |
-| Arms still | 0.0 | The disc stays on its hub |
-| `pytest test_scoring.py` | 6 passed | Score tiers, the drop gate, the disc's geometry (flat and upright in the slot), and constants |
+| Scripted demo, layout A | 1.0 | Catch free at step 115, case open at 360, disc off the hub at 585, drawn in by the drive at step 875 (44 s). The tray half moved 1 mm while the case was opened |
+| Scripted demo, layout B | 1.0 | Same script; drawn in at step 870 |
+| Control: lift the cover's lip without holding the tray | 0.0 | The whole case tipped up 18 degrees on the fingertips, still shut; the catch never let go |
+| Control: open the case, then lift the disc without pressing the hub | 0.25 | The case was opened; the teeth held the disc, the case came away with it and the disc never left the hub |
+| Dream-1, 2,400 steps | 0.0 | Both arms folded down near their bases and stayed there; neither touched the case, which stayed shut |
+| Arms still | 0.0 | The case stays shut |
+| `pytest test_scoring.py` | 10 passed | Score tiers, the drop gate, the opened rule, the catch's numbers, the case's fit, the disc's geometry (flat and upright in the slot), and constants |
 
 ## Runtime and seeds
 
-About 3 minutes per demo run and 8 minutes per Dream-1 run on one L40S, including about a minute of start-up.
+About 4 minutes per demo run and 11 minutes per Dream-1 run on one L40S, including about a minute of start-up.
 `object_jitter=0`; the layout is fixed per lot (A or B), and there is no randomness in the task.
 
 ## Fidelity
 
-- The disc (120 mm, 1.2 mm, 15 mm centre hole, 16 g) and the case (135 x 171 mm tray half and cover half, 70 g) are
-  rigid, with real dimensions. The hub's teeth are three small blocks on radial slides, moved in by the task file
-  while the button is pressed 1.5 mm or more; the button is a sprung slide (600 N/m, 2.5 mm travel).
+- The disc (120 mm, 1.2 mm, 15 mm centre hole, 16 g) and the case (135 x 171 x 15 mm shut, 70 g) are rigid, with
+  real dimensions. The case opens the way a real one does: the spine turns on the tray's far edge and the cover on
+  the spine's top edge, a quarter turn each, so the opened cover lies flat beyond the tray. The spine's hinge has a
+  slight spring toward shut (0.008 N m/rad).
+- The catch is not modelled as moulded clips. It is a spring at the cover's hinge (6.5 N m/rad) that the task file
+  removes for good once the cover has turned 1.5 degrees, which takes 1.2 N at the lip; the spine cannot turn while
+  the catch holds. The catch does not snap shut again if the cover is put back down.
+- The hub's teeth are three small blocks on radial slides, moved in by the task file while the button is pressed
+  1.5 mm or more; the button is a sprung slide (600 N/m, 2.5 mm travel).
 - The console's drive is not modelled mechanically: once the disc is 7 cm into the slot, upright and centred, the
-  task file draws it in at 8 cm/s and holds it. The console is fixed to the table.
+  task file draws it in at 8 cm/s and holds it. The console and the storage box are fixed to the table.
 - Scratches and fingerprints on the disc's data side are not judged.
 
 ## Real-world build
 
-A standard Blu-ray-style game case (135 x 171 x 14 mm closed) with a press-to-release hub, opened flat on a storage
-box 8.5 cm tall, its near edge overhanging the box by 3 cm, with a thumb cut-out (44 x 32 mm) in the tray's near
-edge; a 120 mm game disc on the hub. A slot-loading games console standing upright, its slot 10 cm above the table,
-at the positions in `task.json`. Check the disc for scratches after each trial.
+A standard Blu-ray-style game case (135 x 171 x 15 mm shut) with a press-to-release hub and a 120 mm game disc on the
+hub, snapped shut and laid cover up on a storage box 8.5 cm tall, 28 cm long and 18 cm wide, its opening edge toward
+the robot and overhanging the box by 2.75 cm. The case has a thumb cut-out (44 x 32 mm) in the middle of the tray's
+opening edge, and a finger recess (32 x 30 mm) in the cover's left edge, 22 mm from the opening edge, that leaves a
+20 x 25 mm ledge of the tray's rim showing. A slot-loading games console standing upright, its slot 10 cm above the
+table, at the positions in `task.json`. Check the catch's opening pull with a spring scale at the lip (about 1.2 N),
+and check the disc for scratches after each trial.
 
 ## Third-party assets
 

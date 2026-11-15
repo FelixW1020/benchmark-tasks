@@ -7,10 +7,13 @@
 - :class:`Fixed` is a fixed box with its own friction and look (the console and the storage box are built from these).
 - :class:`Disc` is a loose 120 mm optical disc with a 15 mm centre hole: a ring of thin boxes for its collider, drawn
   as a silver disc with a printed label side.
-- :class:`Case` is an open game case lying flat: one articulation whose root is the case (tray half, spine and cover
-  half, with a thumb cut-out in the tray's near edge and the hub's seat ring and post), with the hub's centre button on
-  a sprung slide (``button``) and three teeth on radial slides (``tooth_0`` .. ``tooth_2``) that hold the disc down on
-  the hub. The task file moves the teeth in when the button is pressed.
+- :class:`Case` is a closed game case lying flat: one articulation whose root is the tray half (with a thumb cut-out in
+  its near edge, a finger ledge on its left edge and the hub's seat ring and post). The spine turns on the tray's far
+  edge (``spine``) and the cover on the spine's top edge (``cover``), each through a quarter turn, so the case opens
+  flat like the real thing; a spring on the cover's hinge stands for the closing snap, and the task file lets it go
+  once the cover's lip has been lifted. The hub's centre button is on a sprung slide (``button``) and three teeth on
+  radial slides (``tooth_0`` .. ``tooth_2``) hold the disc down on the hub; the task file moves the teeth in when the
+  button is pressed.
 
 ``write_joint`` changes a case joint's limits, spring or position in the running simulation, ``body_pose`` reads a
 loose object's pose, ``write_pose`` sets one. ``on_step`` and ``on_reset`` register callbacks ``fn(env)``.
@@ -35,6 +38,7 @@ __all__ = ["Case", "CaseState", "Disc", "Fixed", "TEETH", "body_pose", "env", "f
            "on_step", "write_joint", "write_pose"]
 
 TEETH = 3
+RIM = 0.002                        # thickness of the case's walls and spine
 
 # -- the disc (m): a 120 mm optical disc --------------------------------------------------------------------------------
 DISC_R, HOLE_R, DISC_T = 0.060, 0.0075, 0.0012
@@ -47,6 +51,7 @@ TOOTH = (0.0035, 0.004, 0.0012)    # radial, across, tall
 TOOTH_OUT = 0.0085                 # the teeth's outer ends, engaged (over the disc's hole edge)
 TOOTH_STROKE = 0.0022              # how far they move in when the button is pressed
 BUTTON_R, BUTTON_TRAVEL, BUTTON_CAP = 0.0060, 0.0025, 0.0070
+BUTTON_MASS, TOOTH_MASS = 0.002, 0.0005   # kg, counted in the case's mass
 POST_TOP = FLOOR + SEAT_H + DISC_T + 0.0004
 BUTTON_TOP = POST_TOP + BUTTON_CAP         # the button's top, unpressed, above the case's underside
 
@@ -76,13 +81,27 @@ class Disc(Box):
 
 @dataclass(frozen=True)
 class Case(Box):
-    """An open game case lying flat. ``pos`` is the hub's axis on the case's underside; the tray half spans
-    ``tray`` (x, y) around it, the cover half lies beyond the spine on +y. ``notch`` is the thumb cut-out in the near
-    (-x) edge: (across, deep)."""
+    """A closed game case lying flat, cover up. ``pos`` is the hub's axis on the case's underside; the tray half spans
+    ``tray`` (x, y) around it and the case is ``thick`` when closed. The spine is on the far (+x) edge: the cover swings
+    up and over it and lies open beyond. ``notch`` is the thumb cut-out in the tray's near (-x) edge (across, deep);
+    the cover's lip stands ``lip`` proud over it. ``recess`` is the finger recess in the cover's left (+y) edge, near
+    the opening edge (along the edge, deep), centred ``recess_x`` from the hub's axis, and ``ledge`` the pad on the
+    tray's rim that shows through it. ``snap`` is the spring (N m/rad) on the cover's hinge while the case is snapped shut."""
 
     tray: tuple = (0.135, 0.171)
-    wall: float = 0.006
+    wall: float = 0.006                    # height of the tray's rim
+    thick: float = 0.015
+    plate: float = 0.0015                  # the cover's panel
     notch: tuple = (0.044, 0.032)
+    lip: float = 0.004
+    recess: tuple = (0.032, 0.0305)
+    recess_x: float = -0.0295
+    ledge: tuple = (0.020, 0.0255)
+    cover_mass: float = 0.026
+    spine_mass: float = 0.004
+    snap: float = 8.0
+    spine_spring: float = 0.008            # N m/rad: the living hinge's slight spring, toward closed
+    hinge_damping: float = 0.003           # N m s/rad
     button_spring: float = 600.0           # N/m: about 1.5 N to press it home
     friction: tuple = (0.5, 0.4)
     shell: tuple = (0.10, 0.22, 0.62)
@@ -92,14 +111,14 @@ class Case(Box):
     def _check(self) -> None:
         if not self.name.isidentifier():
             raise ValueError(f"object name {self.name!r} must be a Python identifier")
-        if self.mass is None or self.mass <= 0:
-            raise ValueError(f"{self.name}: a Case must be loose (give it a mass)")
+        if self.mass is None or self.mass <= self.cover_mass + self.spine_mass:
+            raise ValueError(f"{self.name}: a Case must be loose (give it a mass above its cover's and spine's)")
 
 
 @dataclass(frozen=True)
 class CaseState(ObjectState):
-    """The case as the simulator has it; ``joints`` maps button (m, negative pressed) and tooth_i (m, negative in) to
-    their positions."""
+    """The case as the simulator has it; ``joints`` maps button (m, negative pressed), tooth_i (m, negative in), and
+    spine and cover (rad, 0 closed, a quarter turn each when the case lies open) to their positions."""
 
     joints: dict = field(default_factory=dict)
 
@@ -261,13 +280,14 @@ def _spawn_disc(prim_path: str, cfg, translation=None, orientation=None, **kwarg
 
 
 def _spawn_case(prim_path: str, cfg, translation=None, orientation=None, **kwargs):
-    """The case: root body (shell and hub), button and teeth bodies, all authored relative to the hub's axis."""
+    """The case: root body (tray and hub), spine and cover on their hinges, button and teeth, all authored closed and
+    relative to the hub's axis."""
     from pxr import Gf, PhysxSchema, Sdf, UsdPhysics
 
     spec: Case = _SPECS[cfg.kit_name]
     a = _Author(prim_path, translation, orientation)
     root = f"{prim_path}/case"
-    a.body(root, (0.0, 0.0, 0.0), spec.mass)
+    a.body(root, (0.0, 0.0, 0.0), spec.mass - spec.cover_mass - spec.spine_mass - BUTTON_MASS - TEETH * TOOTH_MASS)
     shell = a.look(spec.shell, rough=0.35, opacity=0.92)
     cover = a.look((0.08, 0.12, 0.30), rough=0.5)
     art = a.look((0.85, 0.40, 0.15), rough=0.6)
@@ -276,23 +296,25 @@ def _spawn_case(prim_path: str, cfg, translation=None, orientation=None, **kwarg
     tx, ty = spec.tray
     nw, nd = spec.notch
     x0, x1, y0, y1 = -tx / 2, tx / 2, -ty / 2, ty / 2
+    t, top, under = RIM, spec.thick, spec.thick - spec.plate
+    rx0, rx1, ry = spec.recess_x - spec.recess[0] / 2, spec.recess_x + spec.recess[0] / 2, y1 - spec.recess[1]
+    lx0, lx1 = spec.recess_x - spec.ledge[0] / 2, spec.recess_x + spec.ledge[0] / 2
 
-    def slab(name, xa, xb, ya, yb, za, zb, look=shell):
-        a.box(f"{root}/{name}", ((xa + xb) / 2, (ya + yb) / 2, (za + zb) / 2), (xb - xa, yb - ya, zb - za), look, m)
+    def slab(body, origin, name, xa, xb, ya, yb, za, zb, look=shell, solid=True):
+        a.box(f"{body}/{name}", ((xa + xb) / 2 - origin[0], (ya + yb) / 2, (za + zb) / 2 - origin[1]),
+              (xb - xa, yb - ya, zb - za), look, m if solid else None)
 
-    # tray half: floor with the thumb cut-out at the near edge, and its rim
-    slab("floor_far", x0 + nd, x1, y0, y1, 0.0, FLOOR)
-    slab("floor_l", x0, x0 + nd, nw / 2, y1, 0.0, FLOOR)
-    slab("floor_r", x0, x0 + nd, y0, -nw / 2, 0.0, FLOOR)
-    t = 0.002
-    slab("rim_far", x1 - t, x1, y0, y1, FLOOR, spec.wall)
-    slab("rim_near_l", x0, x0 + t, nw / 2, y1, FLOOR, spec.wall)
-    slab("rim_near_r", x0, x0 + t, y0, -nw / 2, FLOOR, spec.wall)
-    slab("rim_right", x0, x1, y0, y0 + t, FLOOR, spec.wall)
-    slab("spine", x0, x1, y1, y1 + 0.014, 0.0, FLOOR, look=cover)
-    # cover half, open flat beyond the spine, its inside up (a printed insert behind clear plastic)
-    slab("cover", x0, x1, y1 + 0.014, y1 + 0.014 + ty, 0.0, FLOOR, look=cover)
-    a.box(f"{root}/insert", (0.0, y1 + 0.014 + ty / 2, FLOOR + 0.0002), (tx - 0.012, ty - 0.012, 0.0003), art)
+    # tray half: floor with the thumb cut-out at the near edge, its rim on three sides, the finger ledge on the left
+    o = (0.0, 0.0)
+    slab(root, o, "floor_far", x0 + nd, x1, y0, y1, 0.0, FLOOR)
+    slab(root, o, "floor_l", x0, x0 + nd, nw / 2, y1, 0.0, FLOOR)
+    slab(root, o, "floor_r", x0, x0 + nd, y0, -nw / 2, 0.0, FLOOR)
+    slab(root, o, "rim_near_l", x0, x0 + t, nw / 2, y1, FLOOR, spec.wall)
+    slab(root, o, "rim_near_r", x0, x0 + t, y0, -nw / 2, FLOOR, spec.wall)
+    slab(root, o, "rim_right", x0, x1, y0, y0 + t, FLOOR, spec.wall)
+    slab(root, o, "rim_left_near", x0, lx0, y1 - t, y1, FLOOR, spec.wall)
+    slab(root, o, "rim_left_far", lx1, x1, y1 - t, y1, FLOOR, spec.wall)
+    slab(root, o, "ledge", lx0, lx1, y1 - spec.ledge[1], y1, FLOOR, spec.wall)
     # the hub: seat ring and post
     a.cyl(f"{root}/seat", SEAT_R, FLOOR, FLOOR + SEAT_H, hubl, m)
     post_top = POST_TOP
@@ -302,9 +324,31 @@ def _spawn_case(prim_path: str, cfg, translation=None, orientation=None, **kwarg
         a.box(f"{root}/rib_{i}", (0.022 * math.cos(th), 0.022 * math.sin(th), FLOOR + 0.0006), (0.008, 0.0015, 0.0012),
               hubl, quat_wxyz=_qz(th))
 
+    # the spine: the case's far wall when shut; it turns on the tray's far edge, about its outer bottom corner
+    spine = f"{prim_path}/spine"
+    p1 = (x1 + t, 0.0)                                                   # (x, z) of the spine's hinge
+    a.body(spine, (p1[0], 0.0, p1[1]), spec.spine_mass)
+    slab(spine, p1, "strip", x1, x1 + t, y0, y1, 0.0, under, look=cover)
+
+    # the cover: a panel with a rim on three sides, turning on the spine's top edge. Its lip stands proud over the
+    # tray's thumb cut-out (no rim there), and its left edge has a finger recess over the tray's ledge.
+    lid = f"{prim_path}/cover"
+    p2 = (x1 + t, top)                                                   # (x, z) of the cover's hinge
+    a.body(lid, (p2[0], 0.0, p2[1]), spec.cover_mass)
+    slab(lid, p2, "panel", x0, x1 + t, y0, ry, under, top, look=cover)
+    slab(lid, p2, "panel_left_near", x0, rx0, ry, y1, under, top, look=cover)
+    slab(lid, p2, "panel_left_far", rx1, x1 + t, ry, y1, under, top, look=cover)
+    slab(lid, p2, "lip", x0 - spec.lip, x0, -nw / 2, nw / 2, under, top, look=cover)
+    slab(lid, p2, "rim_near_l", x0, x0 + t, nw / 2 + 0.002, y1, spec.wall, under, look=cover)
+    slab(lid, p2, "rim_near_r", x0, x0 + t, y0, -nw / 2 - 0.002, spec.wall, under, look=cover)
+    slab(lid, p2, "rim_right", x0, x1, y0, y0 + t, spec.wall, under, look=cover)
+    slab(lid, p2, "rim_left_near", x0, rx0, y1 - t, y1, spec.wall, under, look=cover)
+    slab(lid, p2, "rim_left_far", rx1, x1, y1 - t, y1, spec.wall, under, look=cover)
+    slab(lid, p2, "sleeve", x0 + 0.006, x1 - 0.004, y0 + 0.006, ry - 0.004, top, top + 0.0003, look=art, solid=False)
+
     # the button: the hub's centre, on a sprung slide down into the post
     button = f"{prim_path}/button"
-    a.body(button, (0.0, 0.0, post_top), 0.002)
+    a.body(button, (0.0, 0.0, post_top), BUTTON_MASS)
     a.cyl(f"{button}/cap", BUTTON_R, 0.0, BUTTON_CAP, a.look((0.70, 0.72, 0.76), rough=0.3), m)
 
     # the teeth: three small blocks over the disc's hole edge, sliding in radially
@@ -314,7 +358,7 @@ def _spawn_case(prim_path: str, cfg, translation=None, orientation=None, **kwarg
         th = 2 * math.pi * i / TEETH
         path = f"{prim_path}/tooth_{i}"
         r = TOOTH_OUT - TOOTH[0] / 2
-        a.body(path, (r * math.cos(th), r * math.sin(th), tooth_z), 0.0005)
+        a.body(path, (r * math.cos(th), r * math.sin(th), tooth_z), TOOTH_MASS)
         a.box(f"{path}/block", (0.0, 0.0, 0.0), TOOTH, hubl, m, quat_wxyz=_qz(th))
         teeth.append((path, th))
 
@@ -337,6 +381,24 @@ def _spawn_case(prim_path: str, cfg, translation=None, orientation=None, **kwarg
         drive.CreateDampingAttr(float(damping))
         drive.CreateTargetPositionAttr(0.0)
 
+    def hinge(name, b0, b1, pos0, stiffness):
+        """A quarter-turn hinge about y: a positive angle swings the part up and over toward +x (opening)."""
+        j = UsdPhysics.RevoluteJoint.Define(stage, f"{b1}/{name}")
+        j.CreateAxisAttr("Y")
+        j.CreateBody0Rel().SetTargets([Sdf.Path(b0)])
+        j.CreateBody1Rel().SetTargets([Sdf.Path(b1)])
+        j.CreateLocalPos0Attr(Gf.Vec3f(*pos0))
+        j.CreateLocalRot0Attr(Gf.Quatf(1.0, 0.0, 0.0, 0.0))
+        j.CreateLocalPos1Attr(Gf.Vec3f(0.0, 0.0, 0.0))
+        j.CreateLocalRot1Attr(Gf.Quatf(1.0, 0.0, 0.0, 0.0))
+        j.CreateLowerLimitAttr(0.0)
+        j.CreateUpperLimitAttr(90.0)
+        drive = UsdPhysics.DriveAPI.Apply(j.GetPrim(), "angular")
+        drive.CreateTypeAttr("force")
+        drive.CreateStiffnessAttr(float(stiffness) * math.pi / 180)      # USD takes N m per degree
+        drive.CreateDampingAttr(float(spec.hinge_damping) * math.pi / 180)
+        drive.CreateTargetPositionAttr(0.0)
+
     up = (math.sqrt(0.5), 0.0, -math.sqrt(0.5), 0.0)                     # joint x axis along +z
     joint("button", button, (0.0, 0.0, post_top), up, -BUTTON_TRAVEL, 0.0, stiffness=spec.button_spring, damping=2.0)
     for i, (path, th) in enumerate(teeth):
@@ -344,6 +406,8 @@ def _spawn_case(prim_path: str, cfg, translation=None, orientation=None, **kwarg
         q = _qz(th)                                                      # joint x axis radial, outward
         joint(f"tooth_{i}", path, (r * math.cos(th), r * math.sin(th), tooth_z), (q[0], q[1], q[2], q[3]),
               0.0, 0.0, stiffness=2000.0, damping=5.0)
+    hinge("spine", root, spine, (p1[0], 0.0, p1[1]), spec.spine_spring)
+    hinge("cover", spine, lid, (0.0, 0.0, p2[1] - p1[1]), spec.snap)
     UsdPhysics.ArticulationRootAPI.Apply(stage.GetPrimAtPath(root))
     art_api = PhysxSchema.PhysxArticulationAPI.Apply(stage.GetPrimAtPath(root))
     art_api.CreateEnabledSelfCollisionsAttr(False)
@@ -390,7 +454,11 @@ def _case_object(spec: Case):
         def _generate_articulation_cfg(self):
             actuators = {"button": ImplicitActuatorCfg(joint_names_expr=["button"], stiffness=spec.button_spring,
                                                        damping=2.0),
-                         "teeth": ImplicitActuatorCfg(joint_names_expr=["tooth_.*"], stiffness=2000.0, damping=5.0)}
+                         "teeth": ImplicitActuatorCfg(joint_names_expr=["tooth_.*"], stiffness=2000.0, damping=5.0),
+                         "cover": ImplicitActuatorCfg(joint_names_expr=["cover"], stiffness=spec.snap,
+                                                      damping=spec.hinge_damping),
+                         "spine": ImplicitActuatorCfg(joint_names_expr=["spine"], stiffness=spec.spine_spring,
+                                                      damping=spec.hinge_damping)}
             cfg = ArticulationCfg(prim_path=self.prim_path, spawn=self.spawner_cfg, actuators=actuators)
             return self._add_initial_pose_to_cfg(cfg)
 
@@ -471,8 +539,8 @@ def _case_state(environment, spec: Case) -> CaseState:
     names, q = list(asset.joint_names), _np(asset.data.joint_pos)[0]
     joints = {j: float(q[names.index(j)]) for j in names}
     tx, ty = spec.tray
-    pts = np.array([[sx * tx / 2, sy, sz] for sx in (-1, 1) for sy in (-ty / 2, ty / 2 + 0.014 + ty)
-                    for sz in (0.0, spec.wall)]) @ _rotation(quat).T + pos
+    pts = np.array([[sx * tx / 2, sy * ty / 2, sz] for sx in (-1, 1) for sy in (-1, 1)
+                    for sz in (0.0, spec.thick)]) @ _rotation(quat).T + pos
     return CaseState(pos=pos, quat_xyzw=quat, lin_vel=np.zeros(3), ang_vel=np.zeros(3), low=pts.min(0),
                      high=pts.max(0), joints=joints)
 

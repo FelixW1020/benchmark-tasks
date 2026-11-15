@@ -1,16 +1,24 @@
 """Demo for the game-disc task, run in the yam_arena embodiment.
 
-    python demo.py task.py out_dir [--window] [--max-steps 2400] [--no-record] [--mode load|nopress|still]
+    python demo.py task.py out_dir [--window] [--max-steps 2400] [--no-record] [--mode load|open|nohold|nopress|still]
 
-1. The left hand comes straight down on the case's hub, fingers closed, and presses its centre button: the hub's
+1. The left hand, closed and leaning out to its own side, presses its fingertips on the tray's finger ledge, through
+   the recess in the cover's left edge: it holds the case down.
+2. The right hand, level and closed, slides its fingertips under the cover's lip at the tray's thumb cut-out and
+   lifts: the catch lets go. The left hand lets go of the ledge; the right hand raises the cover halfway.
+3. The left hand comes in under the raised cover, takes it from the right hand and pushes it up and over the spine:
+   the cover falls open and lies flat beyond the case.
+4. The left hand comes straight down on the case's hub, fingers closed, and presses its centre button: the hub's
    teeth draw in.
-2. The right hand, level and pointing forward with its fingers one above the other, reaches through the case's
-   thumb cut-out and pinches the disc's edge, then lifts the disc straight up off the hub. The left hand lets go.
-3. The right hand carries the disc, still level, in front of the console, and turns its wrist a quarter turn: the
-   disc stands upright, square to the slot.
-4. It slides the disc straight into the slot until the drive takes it, lets go and backs away.
+5. The right hand, level with its fingers one above the other, reaches through the thumb cut-out and pinches the
+   disc's edge, then lifts the disc straight up, off the hub's teeth. The left hand lets go of the button.
+6. The right hand lifts the disc clear of the hub and carries it, still level, in front of the console, and turns its
+   wrist a quarter turn: the disc stands upright, square to the slot.
+7. It slides the disc straight into the slot until the drive takes it, lets go and backs away.
 
-``--mode nopress`` is a control: the same pick without pressing the hub. ``--mode still`` keeps both arms still.
+Controls: ``--mode nohold`` lifts the cover's lip without holding the tray down (the whole case comes up, still
+shut); ``--mode open`` stops once the case is open; ``--mode nopress`` opens the case and then picks at the disc
+without pressing the hub; ``--mode still`` keeps both arms still.
 
 Open loop: every pose comes from the layout constants in the task file. Object states are read only to report
 where things ended up. Writes one MP4 per camera, setup.png (the first top-camera frame) and result.json.
@@ -161,15 +169,82 @@ def best_ik(hand, pos, rot):
 
 
 
-PRESS_DEPTH = 0.005                      # fingertips sent this far below the button's top (the arm gives ~0.3 N/mm)
+FINGERS = 0.008                          # the two closed fingertips together, across the closing direction
+HOLD_LEAN = math.radians(40)             # the holding hand leans this far out to its own side
+HOLD_DEPTH = 0.015                       # its fingertips are sent this far below the ledge's top
+HOOK_IN = 0.005                          # fingertips this far past the tray's near edge, under the cover's lip
+HOOK_Y = (0.014, -0.014)                 # ... this far left of the hub's line to open the catch (beside the hand that
+                                         # holds the tray), then this far (right of it) to leave room for the left hand
+POP_DEG, WAIT_DEG, HAND_OVER_DEG = 8.0, 15.0, 60.0   # the right hand turns the cover this far: to open the catch,
+                                         # while the left hand comes round, and to hand the cover over
+TAKE_S, TAKE_Y = 0.073, 0.070            # where the left hand takes the cover: from its hinge, and left of the hub's line
+OVER = (-0.020, 0.070, 0.070)            # pushing the cover over: from this far before the hinge, this high, to this far past
+PRESS_DEPTH = 0.009                      # fingertips sent this far below the button's top (the arm gives ~0.3 N/mm)
 PINCH_IN = 0.018                         # the pads overlap the disc's edge by this much
 PINCH_OPEN, PINCH_SHUT = 0.030, 0.0      # finger gap around the 1.2 mm disc / commanded on it
-LIFT = 0.015                             # straight up off the hub
+LIFT = (0.015, 0.025)                    # straight up: off the hub's teeth, as far as the fingers on its button let
+                                         # the disc go; then, once they have let go, clear of the button for the carry
 CARRY_Z = 0.100                          # tool height while carrying, above the table (the disc's centre in the slot)
 SLOT_IN = 0.077                          # leading edge this far into the slot before letting go (the drive takes at 7)
 DOWN = frame((0.0, 0.0, -1.0), (1.0, 0.0, 0.0))        # straight down, fingers closing along x
 LEVEL = frame((1.0, 0.0, 0.0), (0.0, 0.0, 1.0))        # pointing forward, fingers one above the other
 UPRIGHT = frame((1.0, 0.0, 0.0), (0.0, -1.0, 0.0))     # pointing forward, fingers side by side: the disc upright
+HOLD = frame((0.0, -math.sin(HOLD_LEAN), -math.cos(HOLD_LEAN)), (1.0, 0.0, 0.0))   # down, leaning out to the left
+
+
+def open_case(T, left, right, hold: bool = True, swing: bool = True):
+    """Generator: hold the tray down, lift the cover's lip until the catch lets go, and swing the cover open."""
+    import disckit as K
+    from yam_arena.constants import READY
+
+    case = next(o for o in T.OBJECTS if o.name == "game_case")
+    hub = np.array([T.HUB_XY[0], T.HUB_XY[1], T.TOP + T.STAND_H])
+    x0, y1 = hub[0] - T.TRAY[0] / 2, hub[1] + T.TRAY[1] / 2
+    hinge = np.array([hub[0] + T.TRAY[0] / 2 + K.RIM, hub[2] + T.CASE_T])     # the cover's hinge line (x, z)
+
+    def under(s, deg, y, drop=0.0):
+        """Tool point of a level, closed hand whose fingertips' top front edge is on the cover's underside ``s`` from
+        the hinge, with the cover open ``deg`` degrees; ``drop`` lower than that."""
+        th = math.radians(deg)
+        c = hinge + s * np.array([-math.cos(th), math.sin(th)]) - case.plate * np.array([math.sin(th), math.cos(th)])
+        return np.array([c[0] - TIP, y, c[1] - FINGERS / 2 - drop])
+
+    ap = HOLD[:, 2]
+    tip = np.array([hub[0] + T.RECESS_X, y1 - 0.018, hub[2] + case.wall + 0.005 - HOLD_DEPTH])
+    press = tip - TIP * ap                                                    # fingertips on the tray's ledge
+    y_r, y_w, s_r = hub[1] + HOOK_Y[0], hub[1] + HOOK_Y[1], hinge[0] - (x0 + HOOK_IN)
+    hook = under(s_r, 0.0, y_r, drop=0.002)
+    reach = right.move_joints(best_ik(right, hook + [-0.06, 0.0, 0.0], LEVEL), 2.5, grip=0.0)
+    if hold:
+        yield from together(reach, chain(left.move_joints(best_ik(left, press - 0.045 * ap, HOLD), 2.5, grip=0.0),
+                                         left.move(press, 1.0)))              # hold the case down
+    else:
+        yield from reach
+    yield from right.move(hook, 1.2)                                          # fingertips under the cover's lip
+    yield from right.follow(lambda u: under(s_r, u * POP_DEG, y_r), 1.2)      # lift: the catch lets go
+    yield from wait(0.3)
+    if not swing:                                                             # control: put it back down
+        yield from right.follow(lambda u: under(s_r, POP_DEG + u * 12.0, y_r), 1.5)
+        yield from wait(1.0)
+        yield from right.follow(lambda u: under(s_r, (1 - u) * (POP_DEG + 12.0), y_r, drop=0.002 * u), 2.0)
+        yield from right.move(hook + [-0.06, 0.0, 0.0], 1.2)
+        return
+    y_l = hub[1] + TAKE_Y
+    take = under(TAKE_S, HAND_OVER_DEG, y_l, drop=0.008)
+    # the left hand lets go of the ledge and waits at its raised ready pose, clear of the cover's swing, while the
+    # right hand raises the cover and moves along its lip to the right; then it comes in level, below the lip
+    release = chain(left.move(press - 0.045 * ap, 0.8), left.move_joints(np.array(READY, float), 1.5)) if hold else wait(0.1)
+    yield from together(release, chain(right.follow(lambda u: under(s_r, POP_DEG + u * (WAIT_DEG - POP_DEG), y_r), 1.5),
+                                       right.move(under(s_r, WAIT_DEG, y_w), 1.2)))
+    yield from right.follow(lambda u: under(s_r, WAIT_DEG + u * (HAND_OVER_DEG - WAIT_DEG), y_w), 2.5)
+    yield from left.move_joints(best_ik(left, take + [-0.075, 0.0, 0.017], LEVEL), 2.0)
+    yield from left.move(take, 1.2)                                           # in under the raised cover
+    over = np.array([hinge[0] + OVER[0] - TIP, y_l, hinge[1] + OVER[1] - FINGERS / 2])
+    yield from left.move(take + 0.4 * (over - take), 1.0)                     # the left hand takes the cover
+    yield from together(left.move(over, 1.5), right.move(right.pos + [-0.09, 0.0, -0.04], 1.2))
+    yield from left.move(over + [OVER[2] - OVER[0], 0.0, 0.0], 1.5)           # past upright: the cover falls open
+    yield from wait(0.8)
+    yield from left.move_joints(np.array(READY, float), 1.5)
 
 
 def script(T, left, right, mode: str = "load"):
@@ -179,27 +254,38 @@ def script(T, left, right, mode: str = "load"):
     if mode == "still":
         yield from wait(8.0)
         return
+    if mode == "nohold":
+        yield from open_case(T, left, right, hold=False, swing=False)
+        return
+    yield from open_case(T, left, right)
+    if mode == "open":
+        return
     hub = np.array([T.HUB_XY[0], T.HUB_XY[1], T.TOP + T.STAND_H])
     button_top = hub[2] + K.BUTTON_TOP
     press = np.array([hub[0], hub[1], button_top - PRESS_DEPTH + TIP])
     disc = T.disc_home()
     pinch = np.array([disc[0] - K.DISC_R + PINCH_IN - TIP, disc[1], disc[2]])
 
-    yield from right.move_joints(best_ik(right, pinch + [-0.06, 0.0, 0.0], LEVEL), 2.5, grip=gap(PINCH_OPEN))
+    ready = right.move_joints(best_ik(right, pinch + [-0.06, 0.0, 0.0], LEVEL), 2.5, grip=gap(PINCH_OPEN))
     if mode != "nopress":
-        yield from left.move_joints(best_ik(left, press + [0.0, 0.0, 0.05], DOWN), 2.0, grip=0.0)
-        yield from left.move(press, 1.0)                                    # press the hub's button
+        yield from together(ready, left.move_joints(best_ik(left, press + [0.0, 0.0, 0.03], DOWN), 2.5, grip=0.0))
+        yield from wait(0.4)
+        yield from left.move(press, 1.5)                                    # press the hub's button
         yield from wait(0.3)
+    else:
+        yield from together(ready, left.move(left.pos + [-0.10, 0.0, 0.02], 2.0))
     yield from right.move(pinch, 1.2)                                       # in through the thumb cut-out
     yield from chain(right.set_grip(gap(PINCH_SHUT), 0.5), wait(0.2))       # the disc's edge between the fingers
-    yield from right.move(pinch + [0.0, 0.0, LIFT], 1.0)                    # straight up off the hub
+    yield from right.move(pinch + [0.0, 0.0, LIFT[0]], 1.0)                 # straight up off the hub's teeth
     if mode != "nopress":
-        yield from left.move(press + [0.0, 0.0, 0.06], 0.8)                 # let the button go
+        yield from left.move(press + [0.0, 0.0, 0.039], 0.8)                # let the button go
+    high = pinch[2] + LIFT[1]
+    yield from right.move(np.array([pinch[0], pinch[1], high]), 1.0)        # up over the hub's button
     reach_back = K.DISC_R * 2 - PINCH_IN + TIP                              # tool to the disc's leading edge
     front = np.array([T.FACE_X - reach_back - 0.02, T.SLOT_Y, T.TOP + CARRY_Z])
-    yield from right.move(np.array([pinch[0] - 0.03, pinch[1], T.TOP + CARRY_Z]), 1.5)
-    yield from right.move(np.array([front[0], 0.5 * (pinch[1] + front[1]), front[2]]), 2.5)
-    yield from chain(right.move(front, 2.0), wait(0.3))
+    yield from right.move(np.array([pinch[0] - 0.03, pinch[1], high]), 1.2)     # back, clear of the case
+    yield from right.move(np.array([front[0], 0.5 * (pinch[1] + front[1]), high]), 2.5)
+    yield from chain(right.move(front, 2.0), wait(0.3))                     # down to the slot's height, facing it
     q = right.joints_for(front, UPRIGHT, seed=np.r_[right.q[:5], 0.0])
     yield from chain(right.move_joints(q, 3.0), wait(0.5))                  # stand the disc upright
     reach = T.FACE_X + SLOT_IN - reach_back                                 # tool x with the leading edge SLOT_IN in
@@ -281,11 +367,14 @@ def run(task_path: str, out_dir: str, max_steps: int = 2400, record: bool = True
         if steps % every == 0:
             r = T.report(states())
             trace.append({"step": steps, "score": info.get("score"), "task": r, "disc_cm": disc_cm(), "case_cm": [round(100 * float(v), 2) for v in states()["game_case"].pos],
-                          "button_mm": round(1000 * states()["game_case"].joints["button"], 2), "hands": hands(), "want_q6": round(float(right.q[5]), 3),
+                          "button_mm": round(1000 * states()["game_case"].joints["button"], 2),
+                          "cover_deg": [round(math.degrees(states()["game_case"].joints[j]), 1) for j in ("cover", "spine")],
+                          "case_quat": [round(float(v), 4) for v in states()["game_case"].quat_xyzw], "hands": hands(), "want_q6": round(float(right.q[5]), 3),
                           "want_cm": {h.name: [round(100 * float(v), 2) for v in h.pos] for h in (left, right)}})
         if steps % (10 if mode.endswith("only") else 40) == 0 and trace:
             t = trace[-1]
-            print(f"step {steps} score {t['score']} {t['task']} disc {t['disc_cm']} {t['hands']}", flush=True)
+            print(f"step {steps} score {t['score']} cover {t['cover_deg']} case {t['case_cm']} {t['case_quat']} "
+                  f"disc {t['disc_cm']} {t['hands']} {t['task']}", flush=True)
         if res.terminated:
             success = res.termination_reason == "success"
             break
@@ -315,7 +404,7 @@ if __name__ == "__main__":
     ap.add_argument("--max-steps", type=int, default=2400)
     ap.add_argument("--window", action="store_true", help="show the Isaac Sim window on the instance's desktop")
     ap.add_argument("--no-record", action="store_true")
-    ap.add_argument("--mode", default="load", choices=("load", "nopress", "still"))
+    ap.add_argument("--mode", default="load", choices=("load", "open", "nohold", "nopress", "still"))
     ap.add_argument("--trace-every", type=int, default=5, help="steps between entries of the trace in result.json")
     a = ap.parse_args()
     sys.path.insert(0, str(Path(a.task).resolve().parent))

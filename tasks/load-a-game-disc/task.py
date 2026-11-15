@@ -1,11 +1,15 @@
 """On the station table: a games console standing upright, with a slot-loading disc drive whose slot is in its front
-face, and beside it, lying open on a storage box, a game case with the game's disc on its hub.
+face, and beside it, lying on a storage box, a closed game case with the game's disc inside on its hub.
 
-The disc has to go from its case into the console. A game case holds its disc on a hub with spring teeth: the disc
-comes off only while the hub's centre button is pressed (the teeth draw in), and lifting it without pressing the
-button just lifts the case with it. The disc is 120 mm across, wider than the gripper opens, and 1.2 mm thick, so it
-can only be pinched at its edge, which the case's thumb cut-out leaves free. The console's slot is 5 mm wide behind a
-flared mouth: the disc has to go in upright, square to the slot and centred, until the drive takes it (7 cm in).
+The disc has to go from its case into the console. The case is snapped shut: its catch takes a 1.2 N pull at the
+cover's lip to open, three times what it takes to lift that edge of the whole case (0.4 N), so pulling the lip alone
+lifts the case and leaves it shut. One hand has to hold the tray half down, by the finger ledge that shows through
+the recess in the cover's left edge beside the lip, while the other lifts the lip; the cover then swings up and over the spine and
+lies open beyond it. Inside, the case holds its disc on a hub with spring teeth: the disc comes off only while the
+hub's centre button is pressed (the teeth draw in), and lifting it without pressing the button just lifts the case
+with it. The disc is 120 mm across, wider than the gripper opens, and 1.2 mm thick, so it can only be pinched at its
+edge, which the case's thumb cut-out leaves free. The console's slot is 5 mm wide behind a flared mouth: the disc has
+to go in upright, square to the slot and centred, until the drive takes it (7 cm in).
 
 Run it:    inspect-robots run --embodiment yam_arena -E task=task.py -E object_jitter=0 --scorer task_score ...
 Demo:      python demo.py task.py out_dir
@@ -31,7 +35,7 @@ SCENE = "station"
 SCORE_OVER = "end"
 TOP = TABLE_TOP[SCENE]
 
-INSTRUCTION = "Take the game disc out of its case and put it into the console."
+INSTRUCTION = "Open the game case, take the disc out and put it into the console."
 
 # -- layout ---------------------------------------------------------------------------------------------------------
 LOT = os.environ.get("DISC_LOT", "A")
@@ -41,10 +45,24 @@ if LOT not in LOTS:
     raise ValueError(f"DISC_LOT must be one of {sorted(LOTS)}, got {LOT!r}")
 HUB_XY = np.array(LOTS[LOT]["hub"])
 
-# -- the storage box the case lies on ----------------------------------------------------------------------------------
+# -- the case, and the storage box it lies on ---------------------------------------------------------------------------
 STAND_H = 0.085
-TRAY = (0.135, 0.171)                   # the case's tray half (x, y); the cover half lies beyond the spine on +y
-CASE_MASS = 0.070
+TRAY = (0.135, 0.171)                   # the case's footprint (x, y); the spine is on the far (+x) long edge
+CASE_T = 0.015                          # the closed case's thickness
+CASE_MASS, COVER_MASS, SPINE_MASS = 0.070, 0.026, 0.004     # the whole empty case, and the cover's and spine's share
+LIP = 0.004                             # the cover's lip stands this proud of the tray's near edge, over the thumb cut-out
+RECESS_X = -0.0295                      # the finger recess and ledge on the left edge, from the hub's axis along x
+
+# The snap: a catch at the opening edge holds the cover shut until its lip is pulled up with SNAP_PULL. Here that is a
+# spring at the cover's hinge that lets go for good once the cover has turned SNAP_ANGLE (see _watch below); the spine
+# cannot turn while the catch holds.
+SNAP_PULL = 1.2                         # N at the cover's lip
+SNAP_ANGLE = math.radians(1.5)          # 3.7 mm of lift at the lip
+SNAP_ARM = TRAY[0] + K.RIM + LIP        # 0.141 m from the cover's hinge to its lip
+SNAP_HOLD = SNAP_PULL * SNAP_ARM / SNAP_ANGLE               # N m/rad
+OPEN_AT = math.radians(90)              # the cover swung this far from shut (upright or beyond): the case is open ...
+OPEN_FLAT = math.radians(20)            # ... if its tray half still lies this flat ...
+OPEN_ON_BOX = 0.010                     # ... and this close to its height on the box (not tipped up or knocked off)
 
 # -- the console: standing upright, slot in its front face (facing the arms) -------------------------------------------
 FACE_X = 0.470                          # the front face
@@ -61,7 +79,7 @@ TAKE_TILT = math.radians(10)            # ... standing within this of upright (s
 TAKE_OFF = (0.0025, 0.012)              # ... and centred: across the slot, and up and down
 SEATED = FACE_X + 0.072                 # where the drive draws the disc's centre to (its trailing edge 12 mm inside)
 DRAW = 0.004                            # m per control step the drive draws it in (8 cm/s)
-IN_SLOT = 0.020                         # leading edge this far into the slot: half credit
+IN_SLOT = 0.020                         # leading edge this far into the slot
 OFF_HUB = 0.010                         # disc centre this far from its place on the hub: off the hub
 DROPPED = 0.003                         # disc's lowest point this close to the table, outside the console: dropped
 PRESSED = -0.0015                       # the hub button pressed this far: the teeth draw in
@@ -73,9 +91,17 @@ def disc_home() -> np.ndarray:
     return np.array([HUB_XY[0], HUB_XY[1], TOP + STAND_H + K.FLOOR + K.SEAT_H + K.DISC_T / 2])
 
 
+def lift_to_tip_the_case() -> float:
+    """The pull (N) at the cover's lip that lifts the near edge of the whole closed case, disc inside, off the box."""
+    arm = TRAY[0] / 2 + K.RIM                                           # from the far bottom edge to the middle
+    return (CASE_MASS + DISC_MASS) * 9.81 * arm / SNAP_ARM
+
+
 def _stand() -> Fixed:
-    x0, x1 = HUB_XY[0] - TRAY[0] / 2 + 0.0275, HUB_XY[0] + TRAY[0] / 2 + 0.010   # front edge behind the thumb cut-out
-    y0, y1 = HUB_XY[1] - TRAY[1] / 2 - 0.010, HUB_XY[1] + TRAY[1] / 2 + 0.014 + TRAY[1] + 0.010
+    """The storage box: its front edge behind the thumb cut-out, long enough for the open cover to lie on."""
+    x0 = HUB_XY[0] - TRAY[0] / 2 + 0.0275
+    x1 = HUB_XY[0] + TRAY[0] / 2 + K.RIM + CASE_T + TRAY[0] + 0.020
+    y0, y1 = HUB_XY[1] - TRAY[1] / 2 - 0.004, HUB_XY[1] + TRAY[1] / 2 + 0.005
     return Fixed("storage_box", pos=((x0 + x1) / 2, (y0 + y1) / 2, TOP + STAND_H / 2),
                  size=(x1 - x0, y1 - y0, STAND_H), color=(0.62, 0.55, 0.46), roughness=0.8)
 
@@ -124,8 +150,9 @@ def _console() -> list:
 OBJECTS = [
     _stand(),
     *_console(),
-    Case("game_case", pos=(float(HUB_XY[0]), float(HUB_XY[1]), TOP + STAND_H),
-         size=(TRAY[0], 2 * TRAY[1] + 0.014, 0.012), mass=CASE_MASS, tray=TRAY),
+    Case("game_case", pos=(float(HUB_XY[0]), float(HUB_XY[1]), TOP + STAND_H), size=(TRAY[0], TRAY[1], CASE_T),
+         mass=CASE_MASS, cover_mass=COVER_MASS, spine_mass=SPINE_MASS, tray=TRAY, thick=CASE_T, lip=LIP,
+         recess_x=RECESS_X, snap=SNAP_HOLD),
     Disc("disc", pos=tuple(float(v) for v in disc_home()), size=(0.12, 0.12, K.DISC_T), mass=DISC_MASS),
 ]
 
@@ -135,8 +162,8 @@ _STATE: dict = {}
 
 
 def _clear() -> None:
-    _STATE.update(off_hub=False, in_slot=False, taking=False, taken=False, dropped=False, teeth_in=False,
-                  draw_x=None, pressed_max=0.0, depth_max=-1.0)
+    _STATE.update(latched=True, opened=False, off_hub=False, in_slot=False, taking=False, taken=False, dropped=False,
+                  teeth_in=False, draw_x=None, pressed_max=0.0, depth_max=-1.0, cover_max=0.0)
 
 
 _clear()
@@ -155,9 +182,18 @@ def centred(pos, axis) -> bool:
             and abs(axis[1]) >= math.cos(TAKE_TILT))
 
 
+def opened(swing, pos, quat) -> bool:
+    """The case counts as opened when its cover has swung ``swing`` (rad) to upright or beyond while the tray half
+    lies flat on the box, where ``pos`` and ``quat`` say the tray is."""
+    flat = K._rotation(quat)[2, 2] >= math.cos(OPEN_FLAT) and abs(pos[2] - (TOP + STAND_H)) <= OPEN_ON_BOX
+    return bool(swing >= OPEN_AT and flat)
+
+
 @on_reset
 def _reset(environment) -> None:
     _clear()
+    write_joint(environment, "game_case", "cover", stiffness=SNAP_HOLD, position=0.0)      # snapped shut
+    write_joint(environment, "game_case", "spine", limits=(0.0, 0.0), position=0.0)
     for i in range(K.TEETH):
         write_joint(environment, "game_case", f"tooth_{i}", limits=(0.0, 0.0), position=0.0)
     write_joint(environment, "game_case", "button", position=0.0)
@@ -169,6 +205,14 @@ def _watch(environment) -> None:
 
     s = _STATE
     case = object_states(environment, ["game_case"])["game_case"]
+    cover, spine = case.joints["cover"], case.joints["spine"]
+    if s["latched"] and cover > SNAP_ANGLE:                             # the catch lets go
+        s["latched"] = False
+        write_joint(environment, "game_case", "cover", stiffness=0.0)
+        write_joint(environment, "game_case", "spine", limits=(0.0, math.pi / 2))
+    s["cover_max"] = max(s["cover_max"], cover + spine)
+    s["opened"] = s["opened"] or opened(cover + spine, case.pos, case.quat_xyzw)
+
     button = case.joints["button"]
     s["pressed_max"] = min(s["pressed_max"], button)
     teeth_in = button <= PRESSED
@@ -181,7 +225,7 @@ def _watch(environment) -> None:
     pos, quat = body_pose(environment, "disc")
     axis, low, depth = disc_geometry(pos, quat)
     s["depth_max"] = max(s["depth_max"], depth)
-    hub_home = np.asarray(case.pos) + np.array([0.0, 0.0, K.FLOOR + K.SEAT_H + K.DISC_T / 2])
+    hub_home = np.asarray(case.pos) + K._rotation(case.quat_xyzw) @ np.array([0.0, 0.0, K.FLOOR + K.SEAT_H + K.DISC_T / 2])
     s["off_hub"] = s["off_hub"] or float(np.linalg.norm(pos - hub_home)) > OFF_HUB
     inside = depth > 0.0 and centred(pos, axis)
     if depth >= IN_SLOT and abs(pos[1] - SLOT_Y) <= 0.004:
@@ -199,15 +243,18 @@ def _watch(environment) -> None:
 # -- scoring --------------------------------------------------------------------------------------------------------
 def score(objects) -> float:
     """0 if the disc ever touched the table outside the console (dropped). Otherwise 1.0 once the drive has taken
-    it; 0.5 if it went at least 2 cm into the slot; 0.25 if it came off the hub; 0 otherwise."""
+    it; 0.75 if it went at least 2 cm into the slot; 0.5 if it came off the hub; 0.25 if the case was opened (its
+    cover swung upright or beyond while its tray half lay flat on the box); 0 otherwise."""
     s = _STATE
     if s["dropped"]:
         return 0.0
     if s["taken"]:
         return 1.0
     if s["in_slot"]:
+        return 0.75
+    if s["off_hub"]:
         return 0.5
-    return 0.25 if s["off_hub"] else 0.0
+    return 0.25 if s["opened"] else 0.0
 
 
 def success(objects) -> bool:
@@ -216,7 +263,8 @@ def success(objects) -> bool:
 
 def report(objects) -> dict:
     s = _STATE
-    return {"off_hub": s["off_hub"], "in_slot": s["in_slot"], "taking": s["taking"], "taken": s["taken"],
+    return {"snap_let_go": not s["latched"], "opened": s["opened"], "cover_max_deg": round(math.degrees(s["cover_max"]), 1),
+            "off_hub": s["off_hub"], "in_slot": s["in_slot"], "taking": s["taking"], "taken": s["taken"],
             "dropped": s["dropped"], "button_min_mm": round(1000 * s["pressed_max"], 2),
             "depth_max_mm": round(1000 * s["depth_max"], 1), "score": score(objects)}
 
