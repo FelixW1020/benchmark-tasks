@@ -1,21 +1,24 @@
 """Demo for the salad-spinner task, run in the yam_arena embodiment.
 
-    python demo.py task.py out_dir [--window] [--max-steps 1200] [--no-record] [--mode spin|nohold|still]
+    python demo.py task.py out_dir [--window] [--max-steps 1200] [--no-record] [--mode spin|nohold|slow|lift|still]
 
 1. The left hand comes straight down on the bowl's side handle and holds it between its fingers.
-2. The right hand comes straight down on the crank's knob and takes it between its fingers.
-3. It turns the crank clockwise six times. Each control step it aims a little further round the crank's axis from
-   where it measures itself to be, so it pulls the knob round without fighting the crank's circle. The knob turns in
-   its fingers; the basket spins up and coasts on. If its fingers close on nothing (the knob has slipped out), it
-   opens them and takes the knob again where it last held it.
+2. The right hand, leaning out from its arm's base, comes down on the crank's knob and takes it between its fingers.
+3. It turns the crank clockwise thirteen times at about one and a quarter turns a second, leaning lightly on the knob so
+   that the lid stays down on the bowl. The knob carries the hand round the crank's real circle, so each control step
+   the hand works that circle out from where it has just been and aims a little further round it. The knob turns in
+   its fingers; the basket spins up past 5 turns a second and stays there. If its fingers close on nothing (the knob
+   has slipped out), it opens them and takes the knob again where it last held it.
 4. It lets go of the knob and rises clear; the left hand lets go of the handle.
 
-``--mode nohold`` is a control: the same cranking with the left hand kept away, so nothing holds the bowl.
+Controls: ``--mode nohold`` does the same cranking with the left hand kept away, so nothing holds the bowl;
+``--mode slow`` cranks four turns at about 0.4 turns a second (the basket never gets up to drying speed);
+``--mode lift`` picks the lid up off the bowl by the knob, puts it back and then cranks (the lid came off);
 ``--mode still`` keeps both arms still (a scene check).
 
 Every target comes from the layout constants in the task file and the spinner's geometry in ``spinnerkit.py``. The
 only feedback is each hand's own measured position and finger opening (the robot's proprioception): to aim each
-first grasp, to steer the cranking, and to notice a slipped knob. The demo never reads the spinner's state.
+first grasp, to steer the cranking, and to notice a slipped knob. The demo never reads the spinner's state to act.
 """
 from __future__ import annotations
 
@@ -166,13 +169,25 @@ TOOL: dict = {}                          # where each hand's tool point actually
 WIDTH: dict = {}                         # each hand's measured finger opening, m (updated every control step)
 DOWN_X = frame((0.0, 0.0, -1.0), (1.0, 0.0, 0.0))     # straight down, fingers closing along x
 DOWN_Y = frame((0.0, 0.0, -1.0), (0.0, 1.0, 0.0))     # straight down, fingers closing along y
-HANDLE_OPEN, HANDLE_SHUT = 0.035, 0.0    # finger gap round the 5 mm handle / commanded on it
-KNOB_OPEN, KNOB_SHUT = 0.045, 0.012      # finger gap round the 22 mm knob / commanded on it
-HOLDING = 0.018                          # m: the fingers measured wider than this have the knob between them
-KNOB_UP = 0.025                          # the tool point this far above the crank arm's top, on the knob's axis
-                                         # (the fingertips, 13 mm below it, clear the arm by 12 mm)
-LEAD = 0.25                              # rad: the hand aims this far round ahead of where it is
-TURNS = 6.0                              # crank turns given
+HANDLE_OPEN = 0.035                      # finger gap round the 5 mm handle
+HANDLE_SHUT = 0.002                      # ... and commanded on it: firm, without twisting the bowl round in the fingers
+KNOB_OPEN, GRIP = 0.045, 0.012           # finger gap round the 22 mm knob / commanded on it
+HOLDING = 0.015                          # m: the fingers measured wider than this have the knob between them
+KNOB_UP = 0.019                          # the tool point this far above the crank arm's top, on the knob's axis: the
+                                         # knob's top is then between the fingers' wide part, and the leaning
+                                         # fingertips, 12 mm lower, clear the arm by 7 mm
+LEAN = math.radians(25.0)                # the cranking hand leans this far out from its arm's base
+LEAD = 0.8                               # rad: the hand aims this far round ahead of where it is
+SLOW_LEAD = 0.2                          # rad: the same for the slow control (about 0.4 turns a second)
+RAMP_S = 2.5                             # s over which the lead eases in
+TURNS, SLOW_TURNS = 13.0, 4.0            # crank turns given
+PRESS = 0.006                            # m: while cranking the hand is sent this far below where it took the knob. It
+                                         # cannot slide down the knob, so it leans on it and keeps the lid down
+FIT_STEPS = 20                           # the hand's last second of positions, for the circle it is going round
+FIT_GAIN = 0.3                           # how fast the circle's centre and radius follow each new fit
+ARC_MIN = math.radians(50.0)             # a fit is used only if those positions span this much of the circle
+R_OK = (0.040, 0.070)                    # ... and its radius is believable for a 5.5 cm crank
+LIFT = 0.030                             # m: how far the lift control picks the lid up by the knob
 AIM_MAX = 0.012                          # the most the first grasp of each hand is aimed off for its lag
 
 
@@ -208,29 +223,59 @@ def release_hold(left):
     yield from left.move(left.pos + [0.0, 0.0, 0.06], 0.8)
 
 
-def crank(T, right, turns: float = TURNS):
-    """Take the knob and turn the crank clockwise by following the hand's own measured position: every control step
-    the hand aims LEAD further round the crank's axis from where it is, at the distance from the axis it is at. So it
-    pulls the knob round steadily and never fights the crank's circle, and a slip in the fingers cannot add up. It
-    stops once its own measured position has gone ``turns`` times round."""
+def fit_circle(points):
+    """Centre and radius of the circle through ``points`` (x, y) by least squares, or None if they do not span one."""
+    pts = np.asarray(points, float)
+    if len(pts) < 6:
+        return None
+    a = np.column_stack([pts[:, 0], pts[:, 1], np.ones(len(pts))])
+    sol, *_ = np.linalg.lstsq(a, -(pts ** 2).sum(axis=1), rcond=None)
+    centre = -sol[:2] / 2
+    r2 = float(centre @ centre - sol[2])
+    if r2 <= 0:
+        return None
+    ang = np.unwrap(np.arctan2(pts[:, 1] - centre[1], pts[:, 0] - centre[0]))
+    if abs(ang[-1] - ang[0]) < ARC_MIN:
+        return None
+    return centre, math.sqrt(r2)
+
+
+def crank(T, right, turns: float = TURNS, lead_max: float = LEAD, lift: bool = False):
+    """Take the knob and turn the crank clockwise by following the hand's own measured position. The knob carries the
+    hand round the crank's real circle, wherever the bowl has ended up, so the hand works that circle out from where
+    it has just been (a circle fitted to its last second of measured positions) and every control step aims
+    ``lead_max`` further round it. So it pulls the knob round without pushing it sideways, however fast it goes, and a
+    slip in the fingers cannot add up. It stops once it has gone ``turns`` times round. ``lift`` (a control): first
+    pick the lid up by the knob and put it back."""
     import spinnerkit as K
 
     s0, q0 = T.spinner_start(), (0.0, 0.0, 0.0, 1.0)
     at = K.knob_point(s0, q0, 0.0, up=KNOB_UP)
-    yield from right.move_joints(best_ik(right, at + [0.0, 0.0, 0.06], DOWN_Y), 2.5, grip=gap(KNOB_OPEN))
+    # The hand leans out from its arm's base toward the spinner, fingers closing across the lean: its two finger faces
+    # stay upright either side of the knob, and every joint keeps room all the way round the crank's circle (held
+    # straight down, the far side of the circle is past where this arm can keep its hand upright).
+    out = np.array([s0[0] - right.base[0], s0[1] - right.base[1], 0.0])
+    out /= np.linalg.norm(out)
+    hand = frame(-math.cos(LEAN) * np.array([0.0, 0.0, 1.0]) + math.sin(LEAN) * out, (out[1], -out[0], 0.0))
+    yield from right.move_joints(best_ik(right, at + [0.0, 0.0, 0.06], hand), 2.5, grip=gap(KNOB_OPEN))
     yield from chain(right.move(at, 1.0), wait(0.3))
     yield from chain(right.move(aim(right, at), 0.4), wait(0.2))
-    yield from chain(right.set_grip(gap(KNOB_SHUT), 0.5), wait(0.3))
-    axis = s0[:2]
+    yield from chain(right.set_grip(gap(GRIP), 0.5), wait(0.3))
+    if lift:
+        home = right.pos.copy()
+        yield from chain(right.move(home + [0.0, 0.0, LIFT], 1.0), wait(0.5), right.move(home, 1.0), wait(0.3))
     height = right.pos[2]
+    centre, radius = np.array(s0[:2], float), K.KNOB_AT            # where the crank's circle is, to begin with
+    path = [TOOL["right"][:2].copy()]
 
     def angle():
-        d = TOOL["right"][:2] - axis
-        return math.atan2(d[1], d[0]), float(np.linalg.norm(d))
+        d = TOOL["right"][:2] - centre
+        return math.atan2(d[1], d[0])
 
-    last, _ = angle()
+    last = angle()
     gone = 0.0
     lead = 0.0
+    press = 0.0
     held_at = TOOL["right"].copy()                                           # where the knob last was in the fingers
     while gone < turns:
         if WIDTH["right"] < HOLDING:                                         # the knob has slipped out: take it again
@@ -238,17 +283,26 @@ def crank(T, right, turns: float = TURNS):
             yield from right.move(right.pos + [0.0, 0.0, 0.02], 0.4)
             yield from right.move(np.array([held_at[0], held_at[1], height + 0.02]), 0.6)
             yield from chain(right.move(np.array([held_at[0], held_at[1], height]), 0.5), wait(0.2))
-            yield from chain(right.set_grip(gap(KNOB_SHUT), 0.5), wait(0.3))
-            last, _ = angle()
+            yield from chain(right.set_grip(gap(GRIP), 0.5), wait(0.3))
+            last = angle()
             lead = 0.0
+            path = [TOOL["right"][:2].copy()]
             continue
-        now, r = angle()
+        now = angle()
         gone += K.FORWARD * math.remainder(now - last, 2 * math.pi) / (2 * math.pi)
+        path = (path + [TOOL["right"][:2].copy()])[-FIT_STEPS:]
+        fit = fit_circle(path)
+        if fit is not None and R_OK[0] <= fit[1] <= R_OK[1]:                 # the circle the knob is carrying the hand round
+            centre = centre + FIT_GAIN * (fit[0] - centre)
+            radius = radius + FIT_GAIN * (fit[1] - radius)
+            now = angle()
         last = now
         held_at = TOOL["right"].copy()
-        lead = min(LEAD, lead + LEAD / (1.5 * CONTROL_HZ))                   # ease in over 1.5 s
+        lead = min(lead_max, lead + lead_max / (RAMP_S * CONTROL_HZ))        # ease in
         a = now + K.FORWARD * lead
-        target = np.array([axis[0] + r * math.cos(a), axis[1] + r * math.sin(a), height])
+        # lean on the knob: a hand left at the height it took the knob creeps up as it speeds up, and lifts the lid by it
+        press = min(PRESS, press + PRESS / (1.0 * CONTROL_HZ))
+        target = np.array([centre[0] + radius * math.cos(a), centre[1] + radius * math.sin(a), height - press])
         right._solve(target, right.rot)
         yield
     yield from chain(right.move(right.pos, 0.3), wait(0.2))
@@ -263,7 +317,10 @@ def script(T, left, right, mode: str = "spin"):
         return
     if mode != "nohold":
         yield from hold(T, left)
-    yield from crank(T, right)
+    if mode == "slow":
+        yield from crank(T, right, turns=SLOW_TURNS, lead_max=SLOW_LEAD)
+    else:
+        yield from crank(T, right, lift=mode == "lift")
     if mode != "nohold":
         yield from release_hold(left)
     yield from wait(2.0)
@@ -283,6 +340,7 @@ def run(task_path: str, out_dir: str, max_steps: int = 1200, record: bool = True
     from inspect_robots import Scene
     from inspect_robots.types import Action
     from inspect_robots_yam.packing import pack
+    import spinnerkit as K
     from yam_arena import station
     from yam_arena.inspect_embodiment import yam_arena_embodiment
 
@@ -306,7 +364,7 @@ def run(task_path: str, out_dir: str, max_steps: int = 1200, record: bool = True
     def states():
         from yam_arena.scene import object_states   # importable only once the simulator has started
 
-        return object_states(emb._env, [T.NAME])
+        return object_states(emb._env, [T.NAME, T.LID])
 
 
     def hands() -> dict:
@@ -340,7 +398,11 @@ def run(task_path: str, out_dir: str, max_steps: int = 1200, record: bool = True
         snap(res.observation)
         if steps % every == 0:
             r = T.report(states())
+            lid = states()[T.LID]
+            knob = K.knob_point(lid.pos, lid.quat_xyzw, lid.joints["crank"], up=KNOB_UP)
             trace.append({"step": steps, "score": info.get("score"), "task": r, "hands": hands(), "want_q6": round(float(right.q[5]), 3),
+                          "lid_cm": [round(100 * float(v), 2) for v in lid.pos], "lid_yaw_deg": round(math.degrees(T.yaw(lid.quat_xyzw)), 1),
+                          "crank_deg": round(math.degrees(lid.joints["crank"]), 1), "knob_cm": [round(100 * float(v), 2) for v in knob],
                           "want_cm": {h.name: [round(100 * float(v), 2) for v in h.pos] for h in (left, right)}})
         if steps % (10 if mode.endswith("only") else 40) == 0 and trace:
             t = trace[-1]
@@ -374,7 +436,7 @@ if __name__ == "__main__":
     ap.add_argument("--max-steps", type=int, default=1200)
     ap.add_argument("--window", action="store_true", help="show the Isaac Sim window on the instance's desktop")
     ap.add_argument("--no-record", action="store_true")
-    ap.add_argument("--mode", default="spin", choices=("spin", "nohold", "still"))
+    ap.add_argument("--mode", default="spin", choices=("spin", "nohold", "slow", "lift", "still"))
     ap.add_argument("--trace-every", type=int, default=5, help="steps between entries of the trace in result.json")
     a = ap.parse_args()
     sys.path.insert(0, str(Path(a.task).resolve().parent))
