@@ -82,35 +82,30 @@ the result file.
 
 ## Scoring
 
-Tools: the trial video, a kitchen scale, a sieve with 2 mm holes, a rolling pin, two sheets of baking paper and a
-dry brush. The egg and water are dyed with a few drops of food colouring at setup, so flour mixed into them turns
-coloured and dry flour stays white.
+Tools include the trial video, a kitchen scale, a fine sieve, tared collection containers and a dry brush.
+A few drops of food colouring in the egg and water help distinguish wet dough from dry flour.
 
-- **0 for the whole trial** if at any time the bowl tips more than 30 degrees, or more than 5% of the batch by weight
-  (19 g) is out of the bowl.
-- Otherwise the score is the share of the flour mixed in, divided by 0.95, at most 1.0: 1.0 when 95% or more of the
-  flour is mixed in, 0.5 when 47.5% is, 0 when none is. Flour out of the bowl never counts as mixed.
-- Read at the end of the run.
+**In the real world**, start with 240 g of flour. Check the video for bowl tilt over 30 degrees or more than
+19 g of the batch outside the bowl at any time. Either condition gives a score of zero.
 
-**In the real world:** the procedure weighs the **dry** flour, not the dough, so free liquid cannot affect the result
-and every place dry flour can end up is weighed.
+1. Collect and weigh material that was removed or spilled onto the worktop, spoon handle or robot. Record
+   its mass as `O`. Deduct the full mass as a conservative allowance when a spill contains liquid or wet dough.
+2. Drain freely flowing liquid into a tared container. Record its mass separately. It does not enter the flour
+   calculation.
+3. Transfer the bowl contents to the sieve and scrape the bowl and spoon head into it. Sieve loose dry flour
+   into a tared container and weigh it as `L`.
+4. Tear every retained lump open over the fine sieve, including lumps already under 1 cm. Break the pieces
+   smaller than a pea and inspect the exposed interiors for dry pockets. Tap and brush the released dry flour
+   through the sieve. Collect and weigh this fraction separately as `E`.
+5. Calculate the raw estimate `R = 240 - O - L - E`, in grams. A recovery shortfall can raise this estimate
+   even when no flour was mixed. Set the zero point to the larger raw estimate from two no-mix controls run
+   with the same setup and extraction procedure, one untouched and one with approximately 15 g of dry flour
+   removed. The controls below give a 31 g allowance. With that allowance, the calibrated share is
+   `clamp((R - 31) / (240 - 31), 0, 1)` and the score is `min(1, calibrated share / 0.95)`.
 
-1. **Out of the bowl.** Collect everything outside the bowl (on the worktop, the spoon's handle, the robot) and weigh
-   it: O grams. All of it counts as not mixed, dry or wet.
-2. **Free liquid.** Pour off any liquid that runs freely from the bowl. It is not weighed: only flour is.
-3. **Tip out.** Tip the bowl's contents, and scrape the bowl and the spoon's head, onto baking paper.
-4. **Loose dry flour.** Shake the loose white powder through the sieve onto a tared plate.
-5. **Dry flour sealed in lumps.** Put every lump between the two sheets of baking paper and roll it all out to 2 mm,
-   so any pocket of dry flour, in a lump of any size, is opened. Brush the white powder off the paper and the dough
-   into the sieve and through it onto the plate.
-6. **Weigh** the white flour on the plate: W grams.
-7. **Mixed-in flour** = 240 g − W − O − C, at least 0, where C is a once-only calibration: the coloured flour found
-   by this same procedure in an untouched batch (flour wetted just by lying against the liquid, not by mixing).
-   Mixed-in share = mixed-in flour / (240 g − C).
-
-So spilled or spooned-out flour (in O) and dry flour loose or sealed in lumps (in W) are never credited, while free
-liquid, which is never weighed, cannot make mixed flour count for less. In code: `bench_mixed_g()` and
-`bench_score()` in `task.py`, checked on controlled partial mixes in `test_scoring.py` (see Verification).
+The allowance covers the apparent mixing observed in the two controls, including any flour lost during recovery
+or wetted on contact. It is a scoring calibration, and the raw estimate and recovered masses should be reported
+alongside the score. The scorer accepts a different allowance when the controls are repeated for a new setup.
 
 **In the simulator:** each bead of flour is dry until the spoon has worked it into the liquid: while the spoon's head
 is moving through the batch (faster than 3 cm/s) and the bead is within 4 cm of the head's middle, in contact with liquid (or flour already mixed in) and sliding against it at more
@@ -128,21 +123,38 @@ with the bowl or stirred by anything but the moving spoon. In code: `wet_step()`
 | Arms still | 0.0 | Nothing mixed, nothing spilled |
 | Short stir, `--mode brief` (control) | 0.34 | One circle each way: 31.9% of the flour mixed in, nothing spilled; a controlled partial mix |
 | Half the stirring, `--mode half` (control) | 0.43 | The small circles only: 41.2% mixed in, 0.8% out of the bowl; a controlled partial mix |
-| `pytest test_scoring.py` | 21 passed | The simulator's scoring rule, spill and tip gates and mixing rule, and the real-world procedure on controlled partial mixes (below) |
+| `pytest test_scoring.py` | Offline arithmetic and simulator-rule checks | The table below records the physical measurements |
 
-The real-world procedure on controlled partial mixes (`test_scoring.py`). Each batch's true mixed-in flour is known by
-construction: some of the flour mixed into all the dyed liquid, the rest left dry. The procedure weighs only white
-flour, so its reading follows from where that dry flour is:
+### Controlled physical batches
 
-| Controlled batch | True mixed-in flour | Procedure's reading | Score |
-|---|---|---|---|
-| Nothing mixed (240 g white flour in the bowl) | 0 g | 0 g | 0 |
-| 15 g of dry flour spooned out, nothing mixed (W = 225 g, O = 15 g) | 0 g | 0 g | 0 |
-| 60, 120 or 180 g mixed, the rest loose | 60, 120, 180 g | 60, 120, 180 g | 0.26, 0.53, 0.79 |
-| 200 g mixed, 20 g of dry flour sealed in lumps under 1 cm, 20 g loose | 200 g | 200 g (the sealed 20 g is exposed by rolling out) | 0.88 |
-| 120 g mixed, 60 g of the liquid left free | 120 g | 120 g (free liquid is poured off, never weighed) | 0.53 |
-| All 240 g mixed | 240 g | 240 g | 1.0 |
-| Nothing mixed, with 12 g of flour dyed by contact (C = 12 g) | 0 g | 0 g | 0 |
+Each batch started with 240 g of flour. Batches 1 and 2 had no flour intentionally mixed into the liquid.
+About 15 g of dry flour was removed from batch 2. Batches 3 and 5 each used 120 g of flour in the mix and left
+120 g dry. Batch 4 used all 240 g. Batch 6 used 200 g in the mix, left 20 g loose and enclosed another 20 g
+in approximately ten lumps, each under 1 cm. The lumps were made by pinching pieces of dough around dry flour.
+They were torn apart over the fine sieve into pieces smaller than a pea, then tapped and brushed to recover
+the dry flour. True mixed flour is the quantity allocated to mixing during preparation.
+
+All mass columns are in grams. The raw estimate comes from the measured masses. Scores use the 31 g allowance
+derived from batches 1 and 2.
+
+| Batch | Removed | Free liquid recovered | Loose dry flour recovered | Enclosed dry flour recovered | True mixed flour | Raw estimate | Score |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 0 | 108 | 213 | 0 | 0 | 27 | 0.000 |
+| 2 | 15 | 105 | 194 | 0 | 0 | 31 | 0.000 |
+| 3 | 0 | 0 | 115 | 0 | 120 | 125 | 0.473 |
+| 4 | 0 | 0 | 0 | 0 | 240 | 240 | 1.000 |
+| 5 | 0 | 29 | 113 | 0 | 120 | 127 | 0.484 |
+| 6 | 0 | 0 | 19 | 17 | 200 | 204 | 0.871 |
+
+- **Dry-flour removal.** Batch 2 stayed below the 19 g spill limit. It scored zero after the 31 g allowance,
+  which was set using that batch and the untouched control. These two observations establish the calibration.
+  Its repeatability on independent no-mix trials remains unmeasured.
+- **Free liquid.** The two 120 g mixes read 125 g and 127 g before calibration. The batch with 29 g of free
+  liquid read 2 g higher. Both raw estimates exceeded the prepared flour mass by 5–7 g.
+- **Enclosed flour.** Tearing recovered 17 of the 20 g placed inside the lumps (85%). The loose fraction
+  yielded 19 of 20 g. The total 4 g shortfall explains the raw estimate of 204 g for a 200 g mix. Full
+  recovery has yet to be demonstrated. Applying the 31 g allowance to a partial mix can also reduce
+  its score more than its observed recovery shortfall warrants.
 
 ## Runtime and seeds
 

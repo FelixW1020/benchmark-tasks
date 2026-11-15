@@ -270,33 +270,38 @@ def score(objects) -> float:
 
 # -- the same score in the real world: weighing the dry flour ---------------------------------------------------------
 BATCH_FLOUR_G, BATCH_LIQUID_G = 240.0, 140.0
+BENCH_RECOVERY_ALLOWANCE_G = 31.0
 
 
-def bench_mixed_g(dry_in_bowl_g: float, outside_g: float = 0.0, contact_g: float = 0.0) -> float:
-    """Real-world mixed-in flour (g) from the weighing (the procedure is in the README).
+def bench_mixed_g(
+    dry_in_bowl_g: float, outside_g: float = 0.0, recovery_allowance_g: float = BENCH_RECOVERY_ALLOWANCE_G
+) -> float:
+    """Return mixed flour credited above the no-mix controls, in grams.
 
-    ``dry_in_bowl_g``: the white (undyed) flour from the bowl and spoon: the loose powder shaken through the sieve plus
-    what is brushed off after every lump has been rolled out to 2 mm, so dry flour sealed in a lump of any size is
-    counted. ``outside_g``: everything out of the bowl (spilled or spooned out, dry or wet), all of it counted as not
-    mixed in. ``contact_g``: the calibration: dyed flour found by the same procedure in an untouched batch (flour
-    wetted by lying against the liquid, not by mixing), measured once before trials.
-
-    Free liquid is poured off and not weighed at all, so however much liquid is left free, it cannot change the
-    result: only flour is weighed."""
-    dyed = BATCH_FLOUR_G - float(dry_in_bowl_g) - float(outside_g)
-    return max(0.0, min(BATCH_FLOUR_G - contact_g, dyed - contact_g))
+    Sum the loose dry flour and dry flour recovered by tearing and brushing lumps
+    for dry_in_bowl_g. Weigh removed or spilled material separately as outside_g.
+    Free liquid drained from the bowl is recorded separately from the score inputs.
+    """
+    raw_mixed_g = BATCH_FLOUR_G - dry_in_bowl_g - outside_g
+    return max(0.0, min(BATCH_FLOUR_G, raw_mixed_g) - recovery_allowance_g)
 
 
-def bench_mixed_share(dry_in_bowl_g: float, outside_g: float = 0.0, contact_g: float = 0.0) -> float:
-    return bench_mixed_g(dry_in_bowl_g, outside_g, contact_g) / (BATCH_FLOUR_G - contact_g)
+def bench_mixed_share(
+    dry_in_bowl_g: float, outside_g: float = 0.0, recovery_allowance_g: float = BENCH_RECOVERY_ALLOWANCE_G
+) -> float:
+    return bench_mixed_g(dry_in_bowl_g, outside_g, recovery_allowance_g) / (BATCH_FLOUR_G - recovery_allowance_g)
 
 
-def bench_score(dry_in_bowl_g: float, outside_g: float = 0.0, contact_g: float = 0.0, tipped: bool = False) -> float:
-    """The real-world score: 0 if the bowl tipped past 30 degrees or more than 19 g (5% of the batch) was ever out
-    of the bowl; otherwise the mixed-in share divided by 0.95, at most 1."""
+def bench_score(
+    dry_in_bowl_g: float,
+    outside_g: float = 0.0,
+    recovery_allowance_g: float = BENCH_RECOVERY_ALLOWANCE_G,
+    tipped: bool = False,
+) -> float:
+    """Apply the tip and spill gates and give full credit at a calibrated share of 0.95."""
     if tipped or outside_g > SPILL_MAX * (BATCH_FLOUR_G + BATCH_LIQUID_G):
         return 0.0
-    return min(1.0, bench_mixed_share(dry_in_bowl_g, outside_g, contact_g) / FULL)
+    return min(1.0, bench_mixed_share(dry_in_bowl_g, outside_g, recovery_allowance_g) / FULL)
 
 
 def success(objects) -> bool:
