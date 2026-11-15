@@ -270,7 +270,7 @@ def score(objects) -> float:
 
 # -- the same score in the real world: weighing the dry flour ---------------------------------------------------------
 BATCH_FLOUR_G, BATCH_LIQUID_G = 240.0, 140.0
-BENCH_RECOVERY_ALLOWANCE_G = 31.0
+BENCH_RECOVERY_ALLOWANCE_G = 34.0
 
 
 def bench_mixed_g(
@@ -278,7 +278,7 @@ def bench_mixed_g(
 ) -> float:
     """Return mixed flour credited above the no-mix controls, in grams.
 
-    Sum the loose dry flour and dry flour recovered by tearing and brushing lumps
+    Sum the loose dry flour and dry flour recovered over the three extraction passes
     for dry_in_bowl_g. Weigh removed or spilled material separately as outside_g.
     Free liquid drained from the bowl is recorded separately from the score inputs.
     """

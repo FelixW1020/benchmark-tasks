@@ -94,18 +94,19 @@ A few drops of food colouring in the egg and water help distinguish wet dough fr
    calculation.
 3. Transfer the bowl contents to the sieve and scrape the bowl and spoon head into it. Sieve loose dry flour
    into a tared container and weigh it as `L`.
-4. Tear every retained lump open over the fine sieve, including lumps already under 1 cm. Break the pieces
-   smaller than a pea and inspect the exposed interiors for dry pockets. Tap and brush the released dry flour
-   through the sieve. Collect and weigh this fraction separately as `E`.
-5. Calculate the raw estimate `R = 240 - O - L - E`, in grams. A recovery shortfall can raise this estimate
-   even when no flour was mixed. Set the zero point to the larger raw estimate from two no-mix controls run
-   with the same setup and extraction procedure, one untouched and one with approximately 15 g of dry flour
-   removed. The controls below give a 31 g allowance. With that allowance, the calibrated share is
-   `clamp((R - 31) / (240 - 31), 0, 1)` and the score is `min(1, calibrated share / 0.95)`.
+4. Extract enclosed dry flour in three passes over the fine sieve. For the first pass, tear open every retained
+   lump, including those under 1 cm, and break the pieces smaller than a pea. Tap and brush the exposed powder
+   through the sieve. For the second and third passes, spread out the retained pieces, split them again to expose
+   the interiors, then tap and brush again. Use a tared container for each pass and sum the three dry-flour masses
+   as `E`.
+5. Calculate the raw estimate `R = 240 - O - L - E` in grams. Calibrate with three untouched batches prepared and
+   measured with the same setup and extraction procedure. Round the largest raw estimate up to a whole gram
+   and fix that allowance before testing fresh batches. The calibration below gives 34 g. The calibrated share is
+   `clamp((R - 34) / 206, 0, 1)` and the score is `min(1, calibrated share / 0.95)`.
 
-The allowance covers the apparent mixing observed in the two controls, including any flour lost during recovery
-or wetted on contact. It is a scoring calibration, and the raw estimate and recovered masses should be reported
-alongside the score. The scorer accepts a different allowance when the controls are repeated for a new setup.
+The allowance covers the apparent mixing seen in the untouched batches, including any flour lost during recovery
+or wetted on contact. Report the recovered masses and raw estimate alongside the score. When changing the setup
+or extraction procedure, repeat calibration and check the fixed allowance on separate no-mix removal trials.
 
 **In the simulator:** each bead of flour is dry until the spoon has worked it into the liquid: while the spoon's head
 is moving through the batch (faster than 3 cm/s) and the bead is within 4 cm of the head's middle, in contact with liquid (or flour already mixed in) and sliding against it at more
@@ -125,7 +126,7 @@ with the bowl or stirred by anything but the moving spoon. In code: `wet_step()`
 | Half the stirring, `--mode half` (control) | 0.43 | The small circles only: 41.2% mixed in, 0.8% out of the bowl; a controlled partial mix |
 | `pytest test_scoring.py` | Offline arithmetic and simulator-rule checks | The table below records the physical measurements |
 
-### Controlled physical batches
+### Initial physical batches
 
 Each batch started with 240 g of flour. Batches 1 and 2 had no flour intentionally mixed into the liquid.
 About 15 g of dry flour was removed from batch 2. Batches 3 and 5 each used 120 g of flour in the mix and left
@@ -134,7 +135,7 @@ in approximately ten lumps, each under 1 cm. The lumps were made by pinching pie
 They were torn apart over the fine sieve into pieces smaller than a pea, then tapped and brushed to recover
 the dry flour. True mixed flour is the quantity allocated to mixing during preparation.
 
-All mass columns are in grams. The raw estimate comes from the measured masses. Scores use the 31 g allowance
+All mass columns are in grams. The raw estimate comes from the measured masses. Historical scores use the original 31 g allowance
 derived from batches 1 and 2.
 
 | Batch | Removed | Free liquid recovered | Loose dry flour recovered | Enclosed dry flour recovered | True mixed flour | Raw estimate | Score |
@@ -146,15 +147,49 @@ derived from batches 1 and 2.
 | 5 | 0 | 29 | 113 | 0 | 120 | 127 | 0.484 |
 | 6 | 0 | 0 | 19 | 17 | 200 | 204 | 0.871 |
 
-- **Dry-flour removal.** Batch 2 stayed below the 19 g spill limit. It scored zero after the 31 g allowance,
-  which was set using that batch and the untouched control. These two observations establish the calibration.
-  Its repeatability on independent no-mix trials remains unmeasured.
-- **Free liquid.** The two 120 g mixes read 125 g and 127 g before calibration. The batch with 29 g of free
-  liquid read 2 g higher. Both raw estimates exceeded the prepared flour mass by 5–7 g.
-- **Enclosed flour.** Tearing recovered 17 of the 20 g placed inside the lumps (85%). The loose fraction
-  yielded 19 of 20 g. The total 4 g shortfall explains the raw estimate of 204 g for a 200 g mix. Full
-  recovery has yet to be demonstrated. Applying the 31 g allowance to a partial mix can also reduce
-  its score more than its observed recovery shortfall warrants.
+The two 120 g mixes read 125 g and 127 g before calibration. The batch with 29 g of free liquid read 2 g higher.
+In batch 6 the original extraction recovered 17 of 20 g of enclosed flour and 19 of 20 g of loose flour.
+
+In the first independent removal checks, removing 5.1 and 15.0 g without mixing gave raw estimates of 28.3 and
+30.2 g and scores of zero. Removing 18.1 g gave a 33.1 g raw estimate and a score of 0.0106 under the original
+31 g allowance. That failure prompted the recalibration below.
+
+### Three-pass extraction
+
+Each trial started with 20.0 g of dry flour enclosed in sub-centimeter dough lumps and a separate loose dry-flour
+fraction. The extraction pass columns record the dry flour recovered from the retained lumps. All masses are in grams.
+
+| Trial | Lumps | Largest diameter (mm) | Loose recovered | Pass 1 | Pass 2 | Pass 3 | Enclosed recovered | Enclosed unrecovered | Enclosed recovery |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 205 | 9.7 | 19.4 | 16.8 | 1.8 | 0.8 | 19.4 | 0.6 | 97.0% |
+| 2 | 211 | 9.8 | 19.5 | 17.1 | 1.5 | 0.9 | 19.5 | 0.5 | 97.5% |
+| 3 | 198 | 9.5 | 19.6 | 16.5 | 2.0 | 1.1 | 19.6 | 0.4 | 98.0% |
+| 4 | 207 | 9.9 | 19.3 | 17.2 | 1.7 | 0.7 | 19.6 | 0.4 | 98.0% |
+
+The third pass recovered 0.7–1.1 g across all four trials. The unrecovered enclosed mass is the difference
+between the 20.0 g put into the lumps and the three-pass total.
+
+### Updated calibration and independent removal checks
+
+The calibration used three untouched batches with 240 g of flour and no material removed.
+
+| Calibration batch | Dry flour recovered (g) | Raw estimate (g) |
+|---|---:|---:|
+| 1 | 207.6 | 32.4 |
+| 2 | 206.9 | 33.1 |
+| 3 | 206.4 | 33.6 |
+
+The maximum was 33.6 g, rounded up to a fixed allowance of 34 g. The following separate no-mix removal trials
+all stayed below the 19 g spill limit. All three scored zero with the fixed allowance.
+
+| Trial | Target removal (g) | Actual removal (g) | Dry flour recovered (g) | Raw estimate (g) | Credited flour (g) | Score |
+|---|---:|---:|---:|---:|---:|---:|
+| 1 | 5.0 | 5.0 | 202.0 | 33.0 | 0.0 | 0.0000 |
+| 2 | 15.0 | 15.1 | 192.2 | 32.7 | 0.0 | 0.0000 |
+| 3 | 18.5 | 18.7 | 188.0 | 33.3 | 0.0 | 0.0000 |
+
+The 34 g allowance sets the zero point for scoring. It can reduce credited progress on partial mixes whose
+recovery shortfall is smaller than in the calibration batches.
 
 ## Runtime and seeds
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import pathlib
 import sys
 
@@ -79,10 +80,32 @@ def test_dry_flour_taken_out_of_the_bowl_without_mixing_scores_zero():
         (19, 17, 0, 204, 0.871),
     ],
 )
-def test_scoring_measured_bench_batches(loose_g, enclosed_g, removed_g, raw_g, expected_score):
+def test_scoring_initial_bench_batches(loose_g, enclosed_g, removed_g, raw_g, expected_score):
     recovered_g = loose_g + enclosed_g
     assert T.bench_mixed_g(recovered_g, removed_g, recovery_allowance_g=0) == raw_g
-    assert T.bench_score(recovered_g, removed_g) == pytest.approx(expected_score, abs=0.0005)
+    historical_score = T.bench_score(recovered_g, removed_g, recovery_allowance_g=31)
+    assert historical_score == pytest.approx(expected_score, abs=0.0005)
+
+
+def test_recovery_allowance_from_untouched_calibration():
+    recovered_g = (207.6, 206.9, 206.4)
+    raw_estimates = [T.bench_mixed_g(mass, recovery_allowance_g=0) for mass in recovered_g]
+    assert raw_estimates == pytest.approx([32.4, 33.1, 33.6])
+    assert T.BENCH_RECOVERY_ALLOWANCE_G == math.ceil(max(raw_estimates))
+
+
+@pytest.mark.parametrize(
+    "removed_g, recovered_g, raw_g",
+    [(5.0, 202.0, 33.0), (15.1, 192.2, 32.7), (18.7, 188.0, 33.3)],
+)
+def test_independent_no_mix_removal_scores_zero(removed_g, recovered_g, raw_g):
+    assert T.bench_mixed_g(recovered_g, removed_g, recovery_allowance_g=0) == pytest.approx(raw_g)
+    assert T.bench_score(recovered_g, removed_g) == 0.0
+
+
+def test_updated_calibration_gives_partial_and_full_credit():
+    assert T.bench_mixed_share(dry_in_bowl_g=103.0) == pytest.approx(0.5)
+    assert T.bench_score(dry_in_bowl_g=0.0) == 1.0
 
 
 def test_bench_spill_or_tip_zeroes_the_trial():
