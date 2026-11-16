@@ -1,17 +1,19 @@
 """Demo for the plumb-bob task, run in the yam_arena embodiment.
 
-    python demo.py task.py out_dir [--window] [--max-steps 1200] [--no-record] [--mode mark|steady|nosteady|still]
+    python demo.py task.py out_dir [--window] [--max-steps 1200] [--no-record] [--mode mark|steady|nosteady|light|still]
 
 1. The left hand comes in from the left, open, level with the bob's body, its fingers either side of the swinging
    bob, and closes slowly until both fingers just touch it: the swing is stopped between them.
 2. It opens again very slowly, so the bob is let down onto its own plumb line without a push, and draws back.
    Meanwhile the right hand has taken the pencil from its rest by its upper end.
 3. The right hand brings the pencil in along its own slant, under the bob, until its point touches the worktop
-   below the bob's point, and draws it back the same way.
+   below the bob's point, presses it on (the hand goes on 3 mm along the pencil: about 0.6 N on the point), and draws
+   it back the same way.
 
 ``--mode steady`` stops after step 2 (the bob steadied, no mark). ``--mode nosteady`` is a control: the right hand
-makes the same mark with the bob left swinging. ``--mode still`` keeps both arms still (a scene check; it shows how
-slowly the swing dies away).
+makes the same mark with the bob left swinging. ``--mode light`` is a control: everything as in the demo, but the
+point only touches the worktop, too lightly to mark. ``--mode still`` keeps both arms still (a scene check; it shows
+how slowly the swing dies away).
 
 Every target comes from the layout constants in the task file and the sizes in ``plumbkit.py``. The only feedback is
 each hand's own measured position (the robot's proprioception), used to correct an arm's sag before a placement. The
@@ -163,8 +165,10 @@ DOWN_X = frame((0.0, 0.0, -1.0), (1.0, 0.0, 0.0))     # straight down, fingers c
 PINCH = 0.140                            # the pencil is taken this far up from its point
 PENCIL_OPEN, PENCIL_SHUT = 0.045, 0.011  # finger gap round the 15 mm pencil / commanded on it
 SHY = 0.060                              # the pencil's point waits this far back up its own slant from the mark
-TOUCH_DOWN = 0.0005                      # aim the point this far into the worktop
-POINT_IN_HAND = np.array([-0.0006, 0.0, -0.0006])   # the pencil's point sits this far off its nominal place in the hand (measured)
+PRESS_ON = 0.0030                        # after it touches, the hand goes on this far along the pencil: the arm gives
+                                         # and the lead's spring takes up the rest, about 0.5 N on the point
+POINT_IN_HAND = np.array([-0.0006, 0.0011, -0.0006])   # the pencil's point sits this far off its nominal place in the hand (measured)
+LIGHT_ON = 0.0008                        # the 'light' control goes on only this far after touching: under 0.3 N on the point
 
 
 def aim(hand, target):
@@ -209,8 +213,9 @@ def fetch(T, right):
     yield from right.move(right.pos + [0.0, 0.0, 0.04], 1.2)
 
 
-def mark(T, right):
-    """Bring the pencil's point in along its own slant, under the bob, onto the worktop; then back the same way."""
+def mark(T, right, press_on: float = PRESS_ON):
+    """Bring the pencil's point in along its own slant, under the bob, onto the worktop, and press it on by carrying
+    the hand ``press_on`` further along the pencil; then back the same way."""
     up = T.UP_PENCIL
 
     def hand_at(shy: float) -> np.ndarray:                           # the tool point, with the pencil's point this far
@@ -222,8 +227,8 @@ def mark(T, right):
     yield from settle(right, hand_at(0.012))
     yield from right.move(hand_at(0.004), 1.0)
     yield from settle(right, hand_at(0.004), 1)
-    yield from right.move(hand_at(-TOUCH_DOWN / up[2]), 1.5)         # down the slant until the point touches
-    yield from wait(0.4)
+    yield from right.move(hand_at(-press_on), 1.5)                   # down the slant: the point touches and is pressed on
+    yield from wait(0.6)
     yield from right.move(hand_at(SHY), 2.0)
     yield from right.move(hand_at(SHY) + [-0.04, -0.06, 0.03], 2.0)
 
@@ -240,6 +245,8 @@ def script(T, left, right, mode: str = "mark", idle_s: float = 60.0):
         yield from together(steady(T, left), fetch(T, right))
         if mode == "mark":
             yield from mark(T, right)
+        elif mode == "light":                                            # control: touch the worktop, too lightly to mark
+            yield from mark(T, right, press_on=LIGHT_ON)
     yield from wait(2.0)
 
 
@@ -350,7 +357,7 @@ if __name__ == "__main__":
     ap.add_argument("--max-steps", type=int, default=1200)
     ap.add_argument("--window", action="store_true", help="show the Isaac Sim window on the instance's desktop")
     ap.add_argument("--no-record", action="store_true")
-    ap.add_argument("--mode", default="mark", choices=("mark", "steady", "nosteady", "still"))
+    ap.add_argument("--mode", default="mark", choices=("mark", "steady", "nosteady", "light", "still"))
     ap.add_argument("--trace-every", type=int, default=5, help="steps between entries of the trace in result.json")
     ap.add_argument("--cam", default="320x176", help="recorded frame size, e.g. 640x352")
     a = ap.parse_args()

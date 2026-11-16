@@ -10,7 +10,8 @@
   ``top_x``, ``top_y``) and the bob turns freely on the line's end (``bob_x``, ``bob_y``), so it swings as a pendulum
   and rocks on its line. The line is a thin stiff rod: it cannot go slack or bend. Nothing drives the joints; a little
   damping stands for the air and the line's own friction (see ``TOP_DAMP`` and ``KNEE_DAMP``).
-- :class:`Pencil` is a loose carpenter's pencil; ``pos`` is its point, its length runs along its own z.
+- :class:`Pencil` is a loose carpenter's pencil; ``pos`` is its point, its length runs along its own z. Its lead's
+  point rides on a short stiff spring, so the force it is pressed with can be read (``lead_force``).
 - :class:`Dot` is one pencil dot: a flat graphite-coloured disc that touches nothing, moved by the task file to where
   the pencil's point touches the worktop.
 
@@ -32,7 +33,7 @@ from dataclasses import dataclass, field
 import numpy as np
 from yam_arena.task_file import Box, ObjectState
 
-__all__ = ["Bob", "Dot", "Fixed", "KitState", "Pencil", "env", "finger_points", "gripper_points", "install", "on_reset",
+__all__ = ["Bob", "Dot", "Fixed", "KitState", "Pencil", "env", "finger_points", "gripper_points", "install", "lead_force", "on_reset",
            "on_step", "point_offset", "segment_distance", "turn_x", "write_joints", "write_pose"]
 
 # -- a 16 oz (454 g) brass plumb bob (m): from its point up to where the line is tied --------------------------------
@@ -59,6 +60,14 @@ PENCIL_W, PENCIL_T = 0.015, 0.007                # wide (its x) and thick (its y
 PENCIL_TIP = 0.025                               # the sharpened length
 PENCIL_L = 0.175                                 # point to end
 PENCIL_MASS = 0.010
+# The lead's point rides on a short stiff spring in the pencil's wood, so the force it is pressed with can be read: the
+# spring's compression times its stiffness, along the pencil. A real lead is rigid; the spring is the measuring device.
+LEAD_TRAVEL = 0.0015                             # the point can be pushed this far in before the wood would touch
+LEAD_K = 600.0                                   # N/m: 0.3 N pushes it in 0.5 mm
+LEAD_DAMP = 2.0                                  # N s/m
+LEAD_MASS = 0.001                                # of the pencil's 10 g
+LEAD_ARMATURE = 0.004                            # kg added to the slide: keeps the 1 g point steady at 240 Hz
+LEAD_CLEAR = 0.0020                              # the wood's taper ends this far behind the point
 
 DOT_R = 0.0015
 PALM_BACK = 0.065                                # a gripper's palm, this far back from its grasp point
@@ -117,7 +126,8 @@ class Dot(Box):
 @dataclass(frozen=True)
 class KitState(ObjectState):
     """A kit object as the simulator has it. For a :class:`Bob`, ``pos`` is the bob's point and ``joints`` maps its
-    joints to their angles (rad); for a :class:`Pencil`, ``pos`` is its point."""
+    joints to their angles (rad); for a :class:`Pencil`, ``pos`` is its point and ``joints['lead']`` how far the
+    point is pushed in against its spring (m)."""
 
     joints: dict = field(default_factory=dict)
 
@@ -353,17 +363,47 @@ def _spawn_bob(prim_path: str, cfg, translation=None, orientation=None, **kwargs
 
 
 def _spawn_pencil(prim_path: str, cfg, translation=None, orientation=None, **kwargs):
-    """A flat pencil: its point at the origin, its length along z, its width along x."""
+    """A flat pencil: its point at the origin, its length along z, its width along x. Two bodies: the stock (wood and
+    barrel) and the lead's point, which slides up to LEAD_TRAVEL into the stock against a spring (joint ``lead``)."""
+    from pxr import Gf, PhysxSchema, Sdf, UsdPhysics
+
     spec: Pencil = _SPECS[cfg.kit_name]
     a = _Author(prim_path, translation, orientation)
-    a.body(prim_path, None, float(spec.mass), lin_damp=0.05, ang_damp=0.1)
+    stock, point = f"{prim_path}/stock", f"{prim_path}/point"
+    a.body(stock, (0.0, 0.0, 0.0), float(spec.mass) - LEAD_MASS, lin_damp=0.05, ang_damp=0.1)
+    a.body(point, (0.0, 0.0, 0.0), LEAD_MASS, lin_damp=0.05, ang_damp=0.1)
     m = a.mat("pencil", *spec.friction)
     red = a.look((0.80, 0.13, 0.10), rough=0.5)
     wood = a.look((0.86, 0.70, 0.48), rough=0.8)
     lead = a.look((0.10, 0.10, 0.11), rough=0.5)
-    a.box(f"{prim_path}/barrel", (0.0, 0.0, (PENCIL_TIP + PENCIL_L) / 2), (PENCIL_W, PENCIL_T, PENCIL_L - PENCIL_TIP), red, m)
-    a.cone(f"{prim_path}/taper", PENCIL_T / 2, 0.0, PENCIL_TIP, wood, m)
-    a.cone(f"{prim_path}/lead", PENCIL_T / 2 * 0.007 / PENCIL_TIP + 0.0002, -0.0001, 0.007, lead)
+    a.box(f"{stock}/barrel", (0.0, 0.0, (PENCIL_TIP + PENCIL_L) / 2), (PENCIL_W, PENCIL_T, PENCIL_L - PENCIL_TIP), red, m)
+    a.cone(f"{stock}/taper", PENCIL_T / 2, LEAD_CLEAR, PENCIL_TIP, wood, m)
+    lead_r = PENCIL_T / 2 * 0.007 / PENCIL_TIP + 0.0002
+    a.cone(f"{point}/lead", lead_r, 0.0, 0.007, lead, m)                  # the graphite: what touches the worktop
+
+    stage = a.stage
+    j = UsdPhysics.PrismaticJoint.Define(stage, f"{point}/lead_slide")
+    j.CreateAxisAttr("Z")
+    j.CreateBody0Rel().SetTargets([Sdf.Path(stock)])
+    j.CreateBody1Rel().SetTargets([Sdf.Path(point)])
+    for attr in (j.CreateLocalPos0Attr, j.CreateLocalPos1Attr):
+        attr(Gf.Vec3f(0.0, 0.0, 0.0))
+    for attr in (j.CreateLocalRot0Attr, j.CreateLocalRot1Attr):
+        attr(Gf.Quatf(1, 0, 0, 0))
+    j.CreateLowerLimitAttr(0.0)
+    j.CreateUpperLimitAttr(float(LEAD_TRAVEL))
+    drive = UsdPhysics.DriveAPI.Apply(j.GetPrim(), "linear")
+    drive.CreateTypeAttr("force")
+    drive.CreateStiffnessAttr(float(LEAD_K))
+    drive.CreateDampingAttr(float(LEAD_DAMP))
+    drive.CreateTargetPositionAttr(0.0)
+    root = stage.GetPrimAtPath(stock)                                     # the stock is the root link: its pose is the pencil's
+    UsdPhysics.ArticulationRootAPI.Apply(root)
+    art = PhysxSchema.PhysxArticulationAPI.Apply(root)
+    art.CreateEnabledSelfCollisionsAttr(False)
+    art.CreateSolverPositionIterationCountAttr(32)
+    art.CreateSolverVelocityIterationCountAttr(4)
+    art.CreateSleepThresholdAttr(0.0)
     return a.root
 
 
@@ -420,6 +460,35 @@ def _bob_object(spec: Bob):
                      spawner_cfg=BobSpawnerCfg(kit_name=spec.name),
                      initial_pose=Pose(position_xyz=tuple(float(v) for v in spec.pos),
                                        rotation_xyzw=(0.0, 0.0, 0.0, 1.0)))
+
+
+def _pencil_object(spec: Pencil):
+    from isaaclab.actuators import ImplicitActuatorCfg
+    from isaaclab.assets import ArticulationCfg
+    from isaaclab.sim.spawners.spawner_cfg import SpawnerCfg
+    from isaaclab.sim.utils import clone
+    from isaaclab.utils import configclass
+    from isaaclab_arena.assets.object import Object
+    from isaaclab_arena.assets.object_type import ObjectType
+    from isaaclab_arena.utils.pose import Pose
+
+    @configclass
+    class PencilSpawnerCfg(SpawnerCfg):
+        func: object = clone(_spawn_pencil)
+        kit_name: str = ""
+
+    class KitObject(Object):
+        def _generate_articulation_cfg(self):
+            actuators = {"lead": ImplicitActuatorCfg(joint_names_expr=["lead_slide"], stiffness=LEAD_K, damping=LEAD_DAMP,
+                                                     armature=LEAD_ARMATURE)}
+            cfg = ArticulationCfg(prim_path=self.prim_path, spawn=self.spawner_cfg, actuators=actuators)
+            return self._add_initial_pose_to_cfg(cfg)
+
+    _SPECS[spec.name] = spec
+    return KitObject(name=spec.name, object_type=ObjectType.ARTICULATION,
+                     spawner_cfg=PencilSpawnerCfg(kit_name=spec.name),
+                     initial_pose=Pose(position_xyz=tuple(float(v) for v in spec.pos),
+                                       rotation_xyzw=tuple(float(v) for v in spec.quat)))
 
 
 def _fixed_object(scene, spec: Fixed):
@@ -507,6 +576,31 @@ def _bob_state(environment, spec: Bob) -> KitState:
                     joints={n: float(q[names.index(n)]) for n in names})
 
 
+def lead_force(pushed_in: float) -> float:
+    """The force (N, along the pencil) that holds the lead's point pushed in by ``pushed_in`` metres."""
+    return LEAD_K * max(0.0, min(float(pushed_in), LEAD_TRAVEL))
+
+
+def _pencil_state(environment, spec: Pencil) -> KitState:
+    """``pos``: the lead's point. ``quat_xyzw``: the stock's. ``joints['lead']``: how far the point is pushed in (m)."""
+    asset = environment.unwrapped.scene[spec.name]
+    origin = _origin(environment)
+    bodies = list(asset.body_names)
+    poses = _np(asset.data.body_link_pose_w)[0]
+    stock, point = poses[bodies.index("stock")], poses[bodies.index("point")]
+    vel = np.zeros(6)
+    try:
+        vel = _np(asset.data.body_com_vel_w)[0][bodies.index("stock")]
+    except Exception:                                                      # noqa: BLE001
+        pass
+    names = list(asset.joint_names)
+    q = float(_np(asset.data.joint_pos)[0][names.index("lead_slide")])
+    low, high = _box_bounds(stock[:3] - origin, _rotation(stock[3:7]), (-PENCIL_W / 2, -PENCIL_T / 2, 0.0),
+                            (PENCIL_W / 2, PENCIL_T / 2, PENCIL_L))
+    return KitState(pos=point[:3] - origin, quat_xyzw=stock[3:7], lin_vel=vel[:3], ang_vel=vel[3:6], low=low, high=high,
+                    joints={"lead": q})
+
+
 def _loose_state(environment, spec) -> KitState:
     asset = environment.unwrapped.scene[spec.name]
     pose = _np(asset.data.root_link_pose_w)[0]
@@ -589,7 +683,7 @@ def _patch_scene(scene) -> None:
         if isinstance(spec, Bob):
             return _bob_object(spec)
         if isinstance(spec, Pencil):
-            return _rigid_object(spec, _spawn_pencil)
+            return _pencil_object(spec)
         if isinstance(spec, Dot):
             return _rigid_object(spec, _spawn_dot)
         if isinstance(spec, Fixed):
@@ -602,7 +696,12 @@ def _patch_scene(scene) -> None:
         out = stock_states(environment, plain) if plain else {}
         for n in mine:
             spec = _SPECS[n]
-            out[n] = _bob_state(environment, spec) if isinstance(spec, Bob) else _loose_state(environment, spec)
+            if isinstance(spec, Bob):
+                out[n] = _bob_state(environment, spec)
+            elif isinstance(spec, Pencil):
+                out[n] = _pencil_state(environment, spec)
+            else:
+                out[n] = _loose_state(environment, spec)
         return {n: out[n] for n in names}
 
     scene.task_object = task_object

@@ -64,6 +64,37 @@ def test_pencil_left_down_or_bob_knocked_afterwards_costs_full_marks():
     assert T.score_from([mark(1.0)], lifted=True, still=False, steadied=True) == 0.5
 
 
+# -- what makes a mark ----------------------------------------------------------------------------------------------------
+
+def test_a_point_held_just_above_the_worktop_makes_no_mark():
+    # the old rule marked anything within 0.5 mm of the worktop; now nothing marks without contact and pressure
+    for gap_mm in (0.5, 0.4, 0.31):
+        assert not T.marking(gap_mm / 1000.0, True, 0.0)
+        assert not T.marking(gap_mm / 1000.0, True, 1.0)                  # not even with its lead pushed in by something else
+
+
+def test_a_point_resting_on_the_worktop_too_lightly_makes_no_mark():
+    assert not T.marking(0.0, True, 0.0)
+    assert not T.marking(0.0, True, 0.1)                                  # the pencil's own weight is 0.1 N
+    assert not T.marking(0.0, True, T.MARK_FORCE - 0.01)
+
+
+def test_a_point_pressed_on_the_worktop_makes_a_mark():
+    assert T.marking(0.0, True, T.MARK_FORCE)
+    assert T.marking(0.0002, True, 0.6)
+    assert not T.marking(0.0, False, 0.6)                                 # pressed on something off the worktop
+
+
+def test_the_marking_force_is_a_light_stroke_the_lead_can_read():
+    assert 0.2 <= T.MARK_FORCE <= 1.0                                     # light: well under the robot's 3 N push
+    assert T.MARK_FORCE > 2 * K.PENCIL_MASS * 9.81                        # more than the pencil lying on its point
+    assert K.lead_force(0.0) == 0.0 and K.lead_force(-0.001) == 0.0
+    assert math.isclose(K.lead_force(0.0005), 0.3)
+    assert K.lead_force(K.LEAD_TRAVEL) > T.MARK_FORCE                     # reached before the lead bottoms out
+    assert K.LEAD_CLEAR > K.LEAD_TRAVEL                                   # the wood never reaches the worktop first
+    assert T.ON_TOP < T.LIFT
+
+
 # -- the layout -----------------------------------------------------------------------------------------------------------
 
 def test_the_bob_hangs_6_mm_above_the_worktop_under_the_hole():

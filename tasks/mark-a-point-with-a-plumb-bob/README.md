@@ -93,7 +93,7 @@ inspect-robots run --embodiment yam_arena --policy dream \
   --scorer task_score --max-steps 1200
 ```
 
-Run limit: 1,200 steps (60 s at 20 Hz). The demo reaches full score at step 691 (35 s), so the limit leaves room for
+Run limit: 1,200 steps (60 s at 20 Hz). The demo reaches full score at step 680 (34 s), so the limit leaves room for
 a slower policy, and no room to wait for the swing to die away.
 
 `PLUMB_LOT=B` in the environment selects a second layout: the shelf, line and bob 2 cm nearer the arms and 3 cm to
@@ -105,6 +105,7 @@ the left (the point under the hole at x 30, y 3). The default is layout A, descr
 python demo.py task.py out_dir                    # the demo
 python demo.py task.py out_dir --mode nosteady    # control: the same mark, made with the bob left swinging
 python demo.py task.py out_dir --mode steady      # control: the bob steadied, no mark
+python demo.py task.py out_dir --mode light       # control: the pencil's point touches the worktop too lightly to mark
 python demo.py task.py out_dir --mode still       # control: the arms do not move
 ```
 
@@ -115,11 +116,13 @@ python demo.py task.py out_dir --mode still       # control: the arms do not mov
    back to its own plumb line and is left there at rest. The hand draws back 12 cm.
 3. Meanwhile the right hand has taken the pencil from its rest by its upper end, at the slant it lay at.
 4. The right hand brings the pencil in along its own slant, under the bob, until its point touches the worktop
-   below the bob's point; then it draws the pencil back the same way.
+   below the bob's point, and presses it on: the hand goes on 3 mm along the pencil, the arm gives, and the point
+   bears on the worktop with about 0.6 N. Then it draws the pencil back the same way.
 
 The demo uses only the layout constants in `task.py`, the sizes in `plumbkit.py`, one measured constant (where the
-pencil's point sits in the hand, 0.6 mm off nominal) and the robot's own measured hand positions (proprioception),
-which it uses to correct an arm's sag before a placement. It never reads the bob's or the pencil's state.
+pencil's point sits in the hand, about 1 mm off nominal) and the robot's own measured hand positions
+(proprioception), which it uses to correct an arm's sag before a placement. It never reads the bob's or the pencil's
+state, and it does not read the force on the pencil.
 
 ## Scoring
 
@@ -127,12 +130,22 @@ Tools: a ruler and the trial video.
 
 - **P** is the point on the worktop directly below the hole. On a real bench it is found by letting the bob settle
   and looking under its point; in the simulator it is known.
-- **A mark:** each time the pencil's point comes down on the worktop (within 0.5 mm) it leaves a mark. The mark runs
-  as far as the point is dragged before it is lifted 4 mm. A mark's distance is measured from P to its farthest part.
+- **A mark:** the pencil leaves a mark only while its point is in contact with the worktop and is pressed on it with
+  at least 0.3 N, a light pencil stroke (about the weight of 30 g on the point). A point held just above the
+  worktop leaves nothing, and neither does one that rests on it more lightly than that. The mark runs as far as the
+  pressed point is dragged, until the point is lifted 4 mm. A mark's distance is measured from P to its farthest
+  part. On a real bench the mark is the graphite on the paper, which a pencil likewise leaves only where it is
+  pressed; in the simulator the force is read from a spring under the lead (see Fidelity).
 - **Hanging free and still:** the bob's point has stayed within 3 mm of plumb (measured across, so a swing of 3 mm
   either side at most) for 1.5 s, longer than one swing, with every part of both grippers' fingers and palms at least
   2 cm clear of the bob and 3.6 cm from its line. The simulator checks points along both fingers' inner and outer
-  faces and on the palm (`gripper_points()` in `plumbkit.py`); on a real bench it is read from the video.
+  faces and on the palm (`gripper_points()` in `plumbkit.py`). On a real bench it is read from two calibrated
+  close-up views of the bob's point, one camera looking along x and one along y, both level with the point: tape a
+  steel rule to the worktop under the point, square to each camera's line of sight, and work out each view's scale
+  from it (pixels per millimetre at the point's distance). After the trial, let the bob settle and take that as
+  plumb in both views. The point is within 3 mm of plumb when the two readings, combined (the root of the sum of
+  their squares), are 3 mm or less; it has to stay so for 1.5 s. The grippers' clearance is read from the overhead
+  video.
 - **A plumbed mark** is one made while the bob was hanging free and still.
 
 | At the end of the trial | Score |
@@ -152,13 +165,14 @@ knocked after the mark. 3 mm is an eighth of an inch, the usual tolerance for th
 
 | Run | Score | Notes |
 |---|---|---|
-| Scripted demo, layout A | 1.0 | Swing of 20 mm stopped between the fingers; the bob left hanging within 0.2 mm of plumb, free and still by step 440 (22 s); one mark 0.5 mm from P at step 650; full score at step 691 (35 s) |
-| Scripted demo, layout B | 1.0 | The bob left within 0.3 mm of plumb; one mark 0.4 mm from P; full score at step 691 |
-| Mark without steadying (control) | 0.0 | The same mark made with the bob left swinging 13 mm either side: it landed 2.0 mm from P and does not count |
+| Scripted demo, layout A | 1.0 | Swing of 20 mm stopped between the fingers; the bob left hanging within 0.2 mm of plumb, free and still by step 395 (20 s); the pencil's point pressed on the worktop with 0.49 N at step 647: one mark, 0.5 mm from P; full score at step 680 (34 s) |
+| Scripted demo, layout B | 1.0 | The bob left within 0.1 mm of plumb; point pressed on with 0.50 N; one mark 1.1 mm from P; full score at step 680 |
+| Touch without pressing (control) | 0.25 | Everything as in the demo, but the hand stops 0.8 mm along the pencil past the touch instead of 3 mm: the point came to 0.13 mm from the worktop with no force on it, and left no mark. The bob had been steadied, so 0.25. Under the earlier rule (a mark whenever the point is within 0.5 mm) this run would have counted as a mark |
+| Mark without steadying (control) | 0.0 | The same pressed mark made with the bob left swinging 15 mm and more either side: it landed 1.2 mm from P and does not count |
 | Steady only (control) | 0.25 | The bob steadied and left hanging; no mark |
-| Arms still (control) | 0.0 | The swing went from 20 mm to 14 mm in the 60 s of the trial: it halves in about two minutes |
-| Dream-1, 1,200 steps | 0.0 | Both grippers reached toward the swinging bob without closing on it; then the right gripper hovered over the pencil in its rest and the left drew back. The bob was never steadied and no mark was made |
-| `pytest test_scoring.py` | 18 passed | The score tiers and what spoils a full score, the bob's hanging and starting points, the swing outlasting the run limit, the pencil's clearance under the bob, both layouts, the write-up's limits |
+| Arms still (control) | 0.0 | The swing went from 20 mm to 14 mm in the 60 s of the trial: it halves in about two minutes (run before this revision; the bob and its line are unchanged) |
+| Dream-1, 1,200 steps | 0.0 | Both grippers reached toward the swinging bob without closing on it; then the right gripper hovered over the pencil in its rest and the left drew back. The bob was never steadied and no mark was made (run before this revision: the pencil was never picked up, so the marking rule was not in play) |
+| `pytest test_scoring.py` | 22 passed | The score tiers and what spoils a full score, what makes a mark (a point held just above the worktop, or resting on it too lightly, makes none; a pressed point does), the bob's hanging and starting points, the swing outlasting the run limit, the pencil's clearance under the bob, both layouts, the write-up's limits |
 
 ## Runtime and seeds
 
@@ -200,13 +214,18 @@ the arms; y to the left; heights above the worktop). Layout A:
   about two minutes (measured: 20 mm to 14 mm in 60 s). Part of each value cancels a known effect of the simulator's
   integrator at 240 Hz, which would otherwise make a free swing grow by about 2% a second; the comment beside the
   constants gives the amounts.
-- **The pencil's mark** is small dark dots that the task file lays where the pencil's point touches the worktop
-  (one where it comes down, another every 2 mm it is dragged). The lead does not wear or break, and a mark needs no
-  pressure.
+- **The pencil's mark needs contact and pressure.** The lead's point rides on a short stiff spring in the pencil's
+  wood (1.5 mm of travel, 600 N/m), so the force it is pressed with can be read: the spring's compression times its
+  stiffness, along the pencil. The task file lays a small dark dot only while the point is on the worktop (its tip
+  within 0.3 mm of the surface, where it rests in contact) and that force is 0.3 N or more: one dot where it is
+  first pressed, another every 2 mm it is dragged. Nothing appears from the point being near the worktop. A real
+  lead is rigid: the spring is the simulator's force gauge, not a feature of the pencil. The 0.3 N is an estimate
+  of a light pencil stroke, not a measurement; the pencil's own weight on its point is 0.1 N, and the demo presses
+  with about 0.6 N. The lead does not wear or break.
 - **The hole** is drawn, not cut: the line hangs from a fixed point at the shelf's underside, which is where a real
   line bears on the edge of its hole.
-- **Contact** between the fingers, the bob and the pencil is ordinary rigid-body contact with friction. Nothing is
-  attached to a gripper or moved by the task file except the pencil dots.
+- **Contact** between the fingers, the bob, the pencil and the worktop is ordinary rigid-body contact with friction.
+  Nothing is attached to a gripper or moved by the task file except the pencil dots.
 
 ## Real-world build
 
@@ -217,9 +236,9 @@ the arms; y to the left; heights above the worktop). Layout A:
 - **The pencil:** a sharpened carpenter's pencil in a block with a 50 degree groove and a stop.
 - **Each trial:** tape a fresh sheet of paper under the bob (or rub out the old mark), put the pencil back, draw the
   bob 2 cm toward the arms and let it go as the trial starts.
-- **Scoring:** from the video, whether the bob was hanging free and still when each mark was made and at the end.
-  Then let the bob settle and measure with a ruler from the point under it to the farthest part of each pencil
-  mark.
+- **Scoring:** from the two calibrated close-up views (see Scoring), whether the bob was hanging free and still
+  when each mark was made and at the end. Then let the bob settle and measure with a ruler from the point under it
+  to the farthest part of each pencil mark.
 
 ## Third-party assets
 

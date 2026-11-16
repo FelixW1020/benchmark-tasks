@@ -61,7 +61,10 @@ STILL = 0.003                            # the bob is still while its point stay
 STILL_S = 1.5                            # ... for this long (more than one swing), hanging free
 CLEAR = K.BOB_R + 0.020                  # hanging free: every part of both grippers' fingers and palms this far from
                                          # the centre line of the bob and its line (2 cm clear of the bob's body)
-TOUCH, LIFT = 0.0005, 0.004              # the pencil's point marks within TOUCH of the worktop; lifted at LIFT
+ON_TOP = 0.0003                          # the pencil's point is on the worktop: its tip this close to the surface ...
+MARK_FORCE = 0.3                         # ... and it marks only while pressed on it this hard (N, along the pencil):
+                                         # a light pencil stroke, about the weight of 30 g. An estimate, not a measurement
+LIFT = 0.004                             # the point this high above the worktop: lifted off
 TABLE_X, TABLE_Y = (-0.19, 0.91), (-0.65, 0.65)
 DOT_EVERY = 0.002                        # a dragged pencil leaves another dot every 2 mm
 
@@ -130,10 +133,18 @@ _STATE: dict = {}
 
 def _clear() -> None:
     _STATE.update(steps=0, calm_s=0.0, steadied=False, marks=[], down=None, lifted=True, dots=0, last_dot=None,
-                  dev=START_OUT, clear=True, point=None, bob=None)
+                  dev=START_OUT, clear=True, point=None, bob=None, force=0.0, press=0.0, lowest=1.0, touch=0.0)
 
 
 _clear()
+
+
+def marking(height: float, over_worktop: bool, force: float) -> bool:
+    """The pencil makes a mark now: its point is in contact with the worktop (``height`` above the surface within
+    ON_TOP, somewhere over the worktop) and is pressed on it with at least MARK_FORCE (``force``: N along the pencil,
+    read from the lead's spring). A point held just above the worktop, or resting on it lighter than that, marks
+    nothing."""
+    return bool(over_worktop and height <= ON_TOP and force >= MARK_FORCE)
 
 
 def _still_now() -> bool:
@@ -167,10 +178,17 @@ def _watch(environment) -> None:
     point = np.asarray(st[PENCIL].pos, float)
     s["point"] = point
     height = float(point[2] - TOP)
+    force = K.lead_force(st[PENCIL].joints["lead"])
+    s["force"] = force
     on_top = TABLE_X[0] < point[0] < TABLE_X[1] and TABLE_Y[0] < point[1] < TABLE_Y[1]
+    if on_top:
+        s["lowest"] = min(s["lowest"], height)
+        if height <= ON_TOP:
+            s["touch"] = max(s["touch"], force)
     if height >= LIFT:
         s["lifted"], s["down"] = True, None
-    elif height < TOUCH and on_top:
+    elif marking(height, on_top, force):
+        s["press"] = max(s["press"], force)
         d = float(np.linalg.norm(point[:2] - PLUMB_XY))
         if s["down"] is None:                                         # the point has come down: a new mark
             s["down"] = {"d": d, "x": float(point[0]), "y": float(point[1]), "plumbed": _still_now(), "step": s["steps"]}
@@ -186,7 +204,7 @@ def _watch(environment) -> None:
 
 # -- scoring --------------------------------------------------------------------------------------------------------
 def score_from(marks, lifted: bool, still: bool, steadied: bool) -> float:
-    """Pure scoring rule. ``marks``: one entry per time the pencil's point came down on the worktop, with ``d`` (m, how
+    """Pure scoring rule. ``marks``: one entry per time the pencil's point was pressed on the worktop, with ``d`` (m, how
     far from the point under the hole the mark reaches) and ``plumbed`` (the bob had been hanging free and still for
     STILL_S when it was made). ``lifted``: the pencil's point is off the worktop now. ``still``: the bob is hanging
     free and still now. ``steadied``: it has done so at some time in the trial."""
@@ -200,11 +218,12 @@ def score_from(marks, lifted: bool, still: bool, steadied: bool) -> float:
 
 
 def score(objects) -> float:
-    """1.0: every pencil mark on the worktop lies within 3 mm of the point under the hole (at least one mark), each
-    made while the bob had been hanging free and still (its point within 3 mm of plumb, both grippers' fingers at
-    least 2 cm clear of it and its line) for 1.5 s, the pencil lifted off, and the bob still hanging free and still. 0.5: a mark made
-    with the bob so hanging lies within 10 mm of the point. 0.25: the bob was steadied (hung free and still for 1.5 s)
-    at some time. Else 0."""
+    """A mark is made only while the pencil's point is on the worktop and pressed on it with at least 0.3 N (see
+    ``marking``). 1.0: every pencil mark on the worktop lies within 3 mm of the point under the hole (at least one
+    mark), each made while the bob had been hanging free and still (its point within 3 mm of plumb, both grippers'
+    fingers at least 2 cm clear of it and its line) for 1.5 s, the pencil lifted off, and the bob still hanging free
+    and still. 0.5: a mark made with the bob so hanging lies within 10 mm of the point. 0.25: the bob was steadied
+    (hung free and still for 1.5 s) at some time. Else 0."""
     s = _STATE
     return score_from(s["marks"], s["lifted"], _still_now(), s["steadied"])
 
@@ -223,6 +242,8 @@ def report(objects) -> dict:
             "bob_point_mm": mm(None if s["bob"] is None else s["bob"] - plumb_point()),
             "calm_s": round(s["calm_s"], 2), "steadied": s["steadied"], "hands_clear": s["clear"],
             "pencil_point_mm": mm(None if s["point"] is None else s["point"] - plumb_point()), "lifted": s["lifted"],
+            "pencil_force_N": round(s["force"], 3), "hardest_marking_press_N": round(s["press"], 3),
+            "pencil_lowest_mm": round(1000 * s["lowest"], 2), "hardest_press_on_worktop_N": round(s["touch"], 3),
             "marks": [{"mm": round(1000 * m["d"], 2), "plumbed": m["plumbed"], "step": m["step"]} for m in s["marks"]]}
 
 
