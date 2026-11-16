@@ -1,21 +1,26 @@
 """Demo for the clothes-peg task, run in the yam_arena embodiment.
 
-    python demo.py task.py out_dir [--window] [--max-steps 1200] [--no-record] [--mode peg|still|slide|beside]
+    python demo.py task.py out_dir [--window] [--max-steps 1200] [--no-record] [--mode peg|still|slide|nolift|liftonly|early]
 
-1. The right hand comes straight down on a spare peg clipped on the basket's rim, its fingers either side of the
-   peg's soft grips, and squeezes: the jaws open and let go of the rim. It lifts the peg off.
-2. It carries the peg, still squeezed open, to just short of the photo's near end above the wire, then over the
-   corner. There it reads where the peg actually sits in its fingers and corrects its aim, then comes down so that
-   the open jaws pass either side of the wire and the photo's edge together.
-3. It lets go: the jaws close on both. It rises clear.
+1. The right hand, leaning 30 degrees out to its own side, comes down on a spare peg clipped on the basket's rim,
+   its fingers either side of the peg's soft grips, and squeezes: the jaws open and let go of the rim.
+2. Meanwhile the left hand, pointing forward and 25 degrees down with its fingers shut, goes in under the hanging
+   photo, meets its bottom edge 10 cm from the pegged corner and swings it up about its peg until it hangs level. It
+   stays there, the photo resting on its fingers.
+3. The right hand carries the peg, still squeezed open, in level from beyond the photo's free end to over its free
+   top corner, then down so that the open jaws pass either side of the wire and the photo's edge together, and lets
+   go: the peg settles on the wire by the groove in its jaws, its tips pinching the photo. The hand rises clear.
+4. The left hand lowers its fingers away from the photo and draws back.
 
 ``--mode still`` keeps both arms still (a scene check). Controls: ``--mode slide`` squeezes a spare peg and slides it
-2.5 cm along the basket's rim, leaving it there; ``--mode beside`` clips the peg on the wire 3 cm past the photo's
-near end, beside the photo but not on it.
+2.5 cm along the basket's rim, leaving it there; ``--mode nolift`` brings the peg to where the photo's corner would be
+without lifting the photo; ``--mode liftonly`` lifts the photo, holds it 2 s and lets it down, with no peg;
+``--mode early`` lifts the photo but lets it down before the peg is brought.
 
-Every pose comes from the layout constants in the task file, except one correction: above the wire, the demo reads
-the squeezed peg's position to aim from where it really sits in the fingers. Otherwise object states are read only
-to report where things ended up. Writes one MP4 per camera, setup.png (the first top-camera frame) and result.json.
+Every pose comes from the layout constants in the task file and each hand's own measured position (proprioception),
+except one correction: a squeezed peg does not always settle the same way in the fingers, so above the wire the demo
+reads that peg's pose once and aims the middle of its open jaws from it. Otherwise object states are read only to
+report where things ended up. Writes one MP4 per camera, setup.png (the first top-camera frame) and result.json.
 """
 
 from __future__ import annotations
@@ -164,41 +169,137 @@ def best_ik(hand, pos, rot):
 
 
 PEG_OPEN, PEG_SHUT = 0.032, 0.005        # finger gap around the peg's handles / squeezed (firm, not crushed)
-HANDLE_UP = 0.016                        # the pads' tips this far above the peg's pivot (on its soft grips)
-SQUEEZED = np.array([0.0062, 0.0073, -0.0277])   # roughly where a squeezed peg's pivot sits from the tool point; the
-                                                 # demo then measures it above the wire and aims from that
-DOWN_R = frame((0.0, 0.0, -1.0), (0.0, -1.0, 0.0))     # straight down, fingers closing across the wire (-y)
+HANDLE_UP = 0.016                        # the tool point is this far (plus TIP) above the peg's pivot, on its soft grips
+OFF_CENTRE = 0.002                       # ... and this far behind the peg's middle: the far finger meets its handle first,
+                                         # so the squeezed peg always settles the same way in the fingers
+LEAN = math.radians(30.0)                # the right hand leans this far out to its own side
+R_LEAN = frame((0.0, math.sin(LEAN), -math.cos(LEAN)), (1.0, 0.0, 0.0))    # fingers closing across the wire (x)
+BAR = math.radians(25.0)                 # the left hand points forward and this far below level, its fingers shut
+L_AX = np.array([math.cos(BAR), 0.0, -math.sin(BAR)])
+L_BAR = frame(L_AX, (0.0, -1.0, 0.0))    # fingers side by side: together they are a bar 8 mm wide and 15 mm deep
+THROUGH = 0.009                          # the photo's plane crosses the fingers this far short of their tips
+UNDER = 0.100                            # the fingers go under the photo's bottom edge this far from its pegged corner
+HALF_W, HALF_D = 0.004, 0.0128           # the bar's half width, and its half depth measured in the photo's plane
+EXTRA = math.radians(8.0)                # the bar starts this far back from the hanging photo's edge
+OVER = math.radians(1.0)                 # ... and stops with the photo this far past level (its free end high)
+ABOVE_CLIP = 0.030                       # the peg waits this far above its place: its jaw tips 8 mm over the photo
+BESIDE = 0.040                           # ... after coming in level from this far beyond the photo's free end
+CLIP_IN = 0.010                          # the peg goes on this far in from the photo's free end
+SQUEEZED = np.array([0.0018, 0.0037, -0.0308])    # roughly where a squeezed peg's pivot sits from this hand's tool point
+TIPS_DOWN = 0.010                        # the peg is let go with its jaws' tips this far below the wire: it then settles
+                                         # until the top of the jaws' groove rests on the wire
+TIP_UP = 0.002                           # the jaws' mouth is judged this far up from their tips
+AIM_MAX = 0.006
+TOOL = {"left": None, "right": None}     # each hand's own measured tool point (proprioception), refreshed every step
 
 
-def script(T, left, right, mode: str = "peg", peg_at=None):
+def aim(hand, target):
+    """Correct ``target`` once for the hand's measured sag, by at most AIM_MAX."""
+    target = np.asarray(target, float)
+    off = target - TOOL[hand.name]
+    n = float(np.linalg.norm(off))
+    if n > AIM_MAX:
+        off = off * AIM_MAX / n
+    return target + off
+
+
+def bar_tool(T, angle: float) -> np.ndarray:
+    """The left hand's tool point with its shut fingers against the photo's bottom edge, UNDER from the pegged corner,
+    when the photo has swung ``angle`` down from level."""
+    c, s = math.cos(angle), math.sin(angle)
+    u, v = UNDER, -(T.PHOTO[2] - T.ABOVE)                                   # the edge's point, in the photo, from its pivot
+    out = HALF_W * abs(s) + HALF_D * abs(c)                                 # the bar's middle, this far outside the edge
+    h, z = u * c + v * s - out * s, -u * s + v * c - out * c                # toward the free end, and up, from the pivot
+    at = T.pivot_point() + np.array([0.0, -h, z])
+    return at + L_AX * (THROUGH - TIP)
+
+
+def lift(T, left, hold: bool = True):
+    """The left hand's shut fingers go under the hanging photo's bottom edge and swing it up level."""
+    hang = T.hang_angle()
+    start = bar_tool(T, hang + EXTRA)
+    back = start - [0.080, 0.0, -0.020]
+    yield from left.move_joints(best_ik(left, back, L_BAR), 2.5, grip=0.0)
+    yield from chain(left.move(start, 1.2), wait(0.2))
+    yield from left.follow(lambda k: bar_tool(T, hang + EXTRA - k * (hang + EXTRA + OVER)), 5.0)
+    yield from wait(0.3)
+    if hold:
+        yield from chain(left.move(aim(left, bar_tool(T, -OVER)), 0.6), wait(0.4))
+
+
+def lower(T, left):
+    """The left hand lets the photo down onto its pegs (or lets it swing back) and draws clear."""
+    yield from left.move(left.pos + [0.0, 0.0, -0.025], 0.8)
+    yield from left.move(left.pos + [-0.110, 0.0, 0.0], 1.2)
+
+
+def take(T, right):
+    """The right hand squeezes a spare peg off the basket's rim."""
+    at = T.spare_start(0) + [OFF_CENTRE, 0.0, HANDLE_UP + TIP]
+    yield from right.move_joints(best_ik(right, at + [0.0, 0.0, 0.05], R_LEAN), 2.5, grip=gap(PEG_OPEN))
+    yield from right.move(at, 0.8)
+    yield from chain(right.set_grip(gap(PEG_SHUT), 0.6), wait(0.3))         # squeeze: the jaws open
+    return at
+
+
+def mouth(T, peg) -> np.ndarray:
+    """The middle of a squeezed peg's open mouth (between its two jaws' faces, TIP_UP from their tips), from the peg's
+    pose and spring angle."""
+    import pegkit as K
+
+    pos, quat, spring = peg
+    lo, hi = T.jaw_faces(-K.PIVOT_Z + TIP_UP, spring)
+    return np.asarray(pos, float) + K._rotation(quat) @ np.array([(lo + hi) / 2, 0.0, -K.PIVOT_Z + TIP_UP])
+
+
+def clip(T, right, peg_now, release: bool = True):
+    """Carry the squeezed peg over the photo's free top corner, bring its open jaws down either side of the wire and
+    the photo's edge together, and let go."""
+    y = T.PIVOT_Y - (T.PHOTO[0] - T.PEG_IN - CLIP_IN)
+    put = np.array([T.LINE_X, y, T.TOP + T.LINE_Z + 0.0166]) - SQUEEZED     # about where the peg will hang
+    yield from right.move(right.pos + [0.0, 0.0, 0.030], 0.8)               # off the rim
+    yield from right.move(put + [0.0, -BESIDE, ABOVE_CLIP], 3.0)            # up and across, in front of the post
+    yield from chain(right.move(put + [0.0, 0.0, ABOVE_CLIP], 1.2), wait(0.4))   # level, to over the photo's corner
+    # A squeezed peg does not always settle the same way in the fingers. Here, once, the demo reads the peg's pose and
+    # aims from it: the middle of its open mouth goes down onto the middle of the wire and the photo together.
+    stack = T.LINE_X - (T.LINE_R + T.IN_FRONT + T.PHOTO[1]) / 2             # the wire and the photo, taken together
+    goal = np.array([stack, y, T.TOP + T.LINE_Z - TIPS_DOWN + TIP_UP])
+    put = right.pos + (goal - mouth(T, peg_now()))
+    yield from chain(right.move([put[0], put[1], right.pos[2]], 0.6), wait(0.3))
+    yield from chain(right.move(put, 1.4), wait(0.3))                       # jaws down over the wire and the photo
+    if release:
+        yield from chain(right.set_grip(1.0, 0.6), wait(0.4))              # let go: the jaws close on both
+        yield from right.move(right.pos + [0.0, 0.0, 0.05], 0.8)
+
+
+def script(T, left, right, mode: str = "peg", peg_now=None):
     yield from wait(0.3)
     if mode == "still":
         yield from wait(8.0)
         return
-    take = T.spare_start(0) + [0.0, 0.0, HANDLE_UP + TIP]
-    put = T.corner_pivot(-1) + [0.0, -0.0004, 0.0] - SQUEEZED            # 0.4 mm clear of the wire
-    yield from right.move_joints(best_ik(right, take + [0.0, 0.0, 0.05], DOWN_R), 2.5, grip=gap(PEG_OPEN))
-    yield from right.move(take, 0.8)
-    yield from chain(right.set_grip(gap(PEG_SHUT), 0.6), wait(0.3))         # squeeze: the jaws open
+    if mode == "liftonly":                                                   # control: lifted and let down, no peg
+        yield from lift(T, left)
+        yield from wait(2.0)
+        yield from lower(T, left)
+        yield from wait(3.0)
+        return
     if mode == "slide":                                                      # control: slid along the rim, left on it
-        yield from chain(right.move(take + [-0.025, 0.0, 0.0], 1.5), wait(0.3), right.set_grip(gap(PEG_OPEN), 0.5),
+        at = yield from take(T, right)
+        yield from chain(right.move(at + [0.0, 0.025, 0.0], 1.5), wait(0.3), right.set_grip(gap(PEG_OPEN), 0.5),
                          wait(0.3), right.move(right.pos + [0.0, 0.0, 0.05], 0.8), wait(3.0))
         return
-    if mode == "beside":                                                     # control: clipped on the wire, beside the photo
-        put = put + [-0.030, 0.0, 0.0]
-    yield from right.move(take + [0.0, 0.0, 0.030], 0.8)                      # off the rim
-    yield from right.move(put + [-0.030, 0.0, 0.030], 2.5)                   # short of the photo's near end, above it
-    yield from chain(right.move(put + [0.0, 0.0, 0.030], 0.8), wait(0.3))
-    if peg_at is not None:                                                   # aim from where the peg really sits
-        target = T.corner_pivot(-1) + [-0.030 if mode == "beside" else 0.0, -0.0004, 0.0]
-        offset = peg_at() - right.pos                                        # peg's pivot from the tool point
-        put = target - offset
-        yield from chain(right.move(put + [0.0, 0.0, 0.030], 0.4), wait(0.3))
-    yield from chain(right.move(put, 1.2), wait(0.3))                        # jaws down over the wire and photo
-    if mode == "drop":
+    if mode == "nolift":                                                     # control: the peg alone, the photo left hanging
+        yield from take(T, right)
+        yield from clip(T, right, peg_now)
+        yield from wait(3.0)
         return
-    yield from chain(right.set_grip(1.0, 0.5), wait(0.4))                   # let go: the jaws close on both
-    yield from right.move(right.pos + [0.0, 0.0, 0.05], 0.8)
+    yield from together(take(T, right), lift(T, left))
+    if mode == "early":                                                      # control: the photo let down before the peg is on
+        yield from lower(T, left)
+        yield from wait(1.0)
+    yield from clip(T, right, peg_now)
+    if mode != "early":
+        yield from lower(T, left)
     yield from wait(3.0)
 
 
@@ -211,8 +312,8 @@ def _write_mp4(frames, path: Path) -> None:
             w.append_data(f)
 
 
-def run(task_path: str, out_dir: str, max_steps: int = 2400, record: bool = True, window: bool = False,
-        hold_s: float = 2.5, mode: str = "peg", every: int = 5) -> dict:
+def run(task_path: str, out_dir: str, max_steps: int = 1200, record: bool = True, window: bool = False,
+        hold_s: float = 2.5, mode: str = "peg", every: int = 5, cam: tuple = (320, 176)) -> dict:
     from inspect_robots import Scene
     from inspect_robots.types import Action
     from inspect_robots_yam.packing import pack
@@ -222,12 +323,16 @@ def run(task_path: str, out_dir: str, max_steps: int = 2400, record: bool = True
     task_path = str(Path(task_path).resolve())
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
-    emb = yam_arena_embodiment(task=task_path, object_jitter=0, control_hz=CONTROL_HZ, cam_width=320, cam_height=176,
+    emb = yam_arena_embodiment(task=task_path, object_jitter=0, control_hz=CONTROL_HZ, cam_width=cam[0], cam_height=cam[1],
                                headless=not window)
     T = emb.task.module
     obs = emb.reset(Scene(id="peg-demo", instruction=T.INSTRUCTION))
     left, right = Hand("left", station.BASES["left"]), Hand("right", station.BASES["right"])
-    gen = script(T, left, right, mode, peg_at=lambda: np.asarray(states()[T.SPARES[0]].pos, float))
+    def peg_now():
+        st = states()[T.SPARES[0]]
+        return np.asarray(st.pos, float), st.quat_xyzw, float(st.joints["spring"])
+
+    gen = script(T, left, right, mode, peg_now)
     frames: dict[str, list] = {}
     trace = []
 
@@ -253,7 +358,13 @@ def run(task_path: str, out_dir: str, max_steps: int = 2400, record: bool = True
                       "gap_mm": round(1000 * sum(abs(float(q[names.index(j)])) for j in ("joint7", "joint8")), 1)}
         return out
 
+    def sense() -> None:
+        from pegkit import finger_points
+
+        TOOL["left"], TOOL["right"] = (np.asarray(v, float) for v in finger_points(emb._env))
+
     snap(obs)
+    sense()
     start = T.report(states())
     steps, ended, success, info = 0, None, False, {}
     while steps < max_steps:
@@ -262,6 +373,7 @@ def run(task_path: str, out_dir: str, max_steps: int = 2400, record: bool = True
         except StopIteration:
             ended = steps if ended is None else ended
         res = emb.step(Action(data=pack(left.cmd, right.cmd)))
+        sense()
         steps += 1
         info = res.info
         snap(res.observation)
@@ -298,11 +410,13 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("task")
     ap.add_argument("out")
-    ap.add_argument("--max-steps", type=int, default=2400)
+    ap.add_argument("--max-steps", type=int, default=1200)
     ap.add_argument("--window", action="store_true", help="show the Isaac Sim window on the instance's desktop")
     ap.add_argument("--no-record", action="store_true")
-    ap.add_argument("--mode", default="peg", choices=("peg", "still", "slide", "beside"))
+    ap.add_argument("--mode", default="peg", choices=("peg", "still", "slide", "nolift", "liftonly", "early"))
     ap.add_argument("--trace-every", type=int, default=5, help="steps between entries of the trace in result.json")
+    ap.add_argument("--cam", default="320x176", help="recorded frame size, e.g. 640x352")
     a = ap.parse_args()
     sys.path.insert(0, str(Path(a.task).resolve().parent))
-    run(a.task, a.out, a.max_steps, record=not a.no_record, window=a.window, mode=a.mode, every=a.trace_every)
+    run(a.task, a.out, a.max_steps, record=not a.no_record, window=a.window, mode=a.mode, every=a.trace_every,
+        cam=tuple(int(v) for v in a.cam.split("x")))

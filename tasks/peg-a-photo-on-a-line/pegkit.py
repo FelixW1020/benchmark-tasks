@@ -6,11 +6,15 @@
 
 - :class:`Fixed` is a fixed box with its own friction and look (the line, its posts, the photo holder and the peg
   basket are built from these).
-- :class:`Photo` is a loose photo print: a thin card with a printed picture drawn on its front.
+- :class:`Photo` is a loose photo print: a thin card with a printed picture drawn on its front. ``no_touch`` names
+  pegs it passes through without contact (a peg whose hold on it is a :class:`Joint`, not a clamp).
+- :class:`Joint` and :func:`joints` declare joints that the kit authors afresh at every reset from where the bodies
+  are: a fixed hold, or a pivot about body 1's own y axis, each letting go for good at a set force.
 - :class:`Peg` is a soft-grip wooden clothes peg (rubber pads on the outsides of its handles): one articulation of two legs on a pivot with a torsion spring. In the peg's
   frame the legs run along +z from the jaw tips (z = 0) to the handle ends, and part along x. The ``spring`` joint
   turns the second leg about the pivot; squeezing the handles together opens the jaws (the joint goes negative), and
-  the spring closes them again on whatever is between them.
+  the spring closes them again on whatever is between them, until their tips meet at ``SHUT``. Each jaw has a groove
+  across it for the line: a peg hangs on a line by its grooves and pinches what is below the line with its tips.
 
 ``on_step`` and ``on_reset`` register callbacks ``fn(env)``.
 
@@ -30,13 +34,14 @@ from dataclasses import dataclass, field
 import numpy as np
 from yam_arena.task_file import Box, ObjectState
 
-__all__ = ["Fixed", "KitState", "Peg", "Photo", "body_pose", "env", "finger_points", "install", "on_reset", "on_step",
-           "write_joint", "write_pose"]
+__all__ = ["Fixed", "Joint", "KitState", "Peg", "Photo", "body_pose", "env", "finger_points", "install", "joints",
+           "on_reset", "on_step", "release", "write_joint", "write_pose"]
 
 # -- a wooden clothes peg (m), in its own frame ------------------------------------------------------------------------
 PEG_LEN, PEG_W, LEG_T = 0.072, 0.010, 0.005     # long, wide (along y), each leg's thickness (along x)
 PIVOT_Z = 0.030                                 # the spring's pivot, this far up from the jaw tips
-GAP = 0.0008                                    # between the jaws' faces, closed on nothing
+GAP = 0.0008                                    # between the legs' faces at the pivot
+SHUT = math.atan((GAP - 0.0001) / PIVOT_Z)      # the spring joint's angle with the jaws shut on nothing (tips 0.1 mm apart)
 SPLAY = math.radians(8.0)                       # each handle angles out this much from its jaw
 OPEN_MAX = math.radians(18.0)                   # the second leg turns at most this far (handles meeting)
 NOTCH_Z = (0.005, 0.014)                        # the jaws' groove for the line, up from the tips
@@ -60,18 +65,38 @@ class Photo(Box):
 
     quat: tuple = (0.0, 0.0, 0.0, 1.0)
     friction: tuple = (0.5, 0.4)
+    no_touch: tuple = ()                    # names of pegs this print does not collide with
     meta: dict = field(default_factory=dict, compare=False, hash=False)
+
+
+@dataclass(frozen=True)
+class Joint:
+    """A joint the kit authors at every reset, from where its two bodies are then. ``body0``, ``body1``: (object name,
+    body inside it or None); ``body0`` None joins body 1 to the world. ``kind``: ``"fixed"``, or ``"pivot"``: body 1
+    turns freely about its own y axis and can lean up to ``cone`` degrees out of that plane against a spring of
+    ``flex`` N m per degree (a card held by one corner, which bends a little). ``anchor1``: the joint's place in
+    body 1's frame. It lets go for good at a pull of ``force`` newtons (or ``torque`` N m)."""
+
+    name: str
+    body0: tuple | None
+    body1: tuple
+    kind: str = "fixed"
+    anchor1: tuple = (0.0, 0.0, 0.0)
+    force: float = 1.0e6
+    torque: float = 1.0e6
+    cone: float = 3.0
+    flex: float = 0.005
 
 
 @dataclass(frozen=True)
 class Peg(Box):
     """A wooden clothes peg. ``pos`` is the pivot's middle, ``quat`` (xyzw) its orientation. ``spring`` (N m/rad) and
-    ``preload`` (rad) set the torsion spring: closed on nothing it presses the jaws together with
-    spring * preload / PIVOT_Z newtons."""
+    ``preload`` (rad) set the torsion spring: it is wound ``preload`` past the angle at which the jaws' tips meet, so
+    shut on nothing it presses the tips together with spring * preload / PIVOT_Z newtons."""
 
     quat: tuple = (0.0, 0.0, 0.0, 1.0)
     spring: float = 0.25
-    preload: float = math.radians(25.0)
+    preload: float = math.radians(7.0)
     open0: float = 0.0                      # the spring joint's angle at the start (negative: jaws open on something)
     friction: tuple = (0.6, 0.5)
     wood: tuple = (0.80, 0.66, 0.46)
@@ -97,6 +122,21 @@ def _rotation(q) -> np.ndarray:
     return np.array([[1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)],
                      [2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x)],
                      [2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)]])
+
+
+def _quat(rot) -> tuple:
+    """The quaternion (xyzw) of a rotation matrix."""
+    m = np.asarray(rot, float)
+    t = float(np.trace(m))
+    if t > 0:
+        s = math.sqrt(t + 1.0) * 2
+        return ((m[2, 1] - m[1, 2]) / s, (m[0, 2] - m[2, 0]) / s, (m[1, 0] - m[0, 1]) / s, s / 4)
+    i = int(np.argmax(np.diag(m)))
+    j, k = (i + 1) % 3, (i + 2) % 3
+    s = math.sqrt(1.0 + m[i, i] - m[j, j] - m[k, k]) * 2
+    q = [0.0, 0.0, 0.0, 0.0]
+    q[i], q[j], q[k], q[3] = s / 4, (m[j, i] + m[i, j]) / s, (m[k, i] + m[i, k]) / s, (m[k, j] - m[j, k]) / s
+    return tuple(q)
 
 
 def _material(sim_utils, sf, df, combine="average"):
@@ -220,6 +260,8 @@ class _Author:
 # -- spawning ------------------------------------------------------------------------------------------------------------
 
 _SPECS: dict = {}
+_PATHS: dict = {}                      # where each kit object's prim was spawned
+_JOINTS: dict = {}                     # the task's joints, by name
 
 
 def _fixed_object(scene, spec: Fixed):
@@ -236,9 +278,18 @@ def _fixed_object(scene, spec: Fixed):
 
 def _spawn_photo(prim_path: str, cfg, translation=None, orientation=None, **kwargs):
     """A photo print: one thin box collider, the picture drawn as flat boxes on its front (-y) face."""
+    from pxr import Sdf, UsdPhysics
+
     spec: Photo = _SPECS[cfg.kit_name]
+    _PATHS[spec.name] = prim_path
     a = _Author(prim_path, translation, orientation)
-    a.body(prim_path, None, spec.mass, ang_damp=0.3)
+    body = a.body(prim_path, None, spec.mass, ang_damp=2.0)     # it turns in its peg's jaws against their friction
+    if spec.no_touch:                                                      # the pegs it passes through
+        parent = prim_path.rsplit("/", 1)[0]
+        rel = UsdPhysics.FilteredPairsAPI.Apply(body).CreateFilteredPairsRel()
+        for peg in spec.no_touch:
+            for leg in ("leg_a", "leg_b"):
+                rel.AddTarget(Sdf.Path(f"{parent}/{peg}/{leg}"))
     m = a.mat("card", *spec.friction)
     w, t, h = spec.size[0], spec.size[1], spec.size[2]
     a.box(f"{prim_path}/card", (0.0, 0.0, 0.0), (w, t, h), a.look((0.96, 0.96, 0.94), rough=0.3), m)
@@ -261,6 +312,7 @@ def _spawn_peg(prim_path: str, cfg, translation=None, orientation=None, **kwargs
     from pxr import Gf, PhysxSchema, Sdf, UsdPhysics
 
     spec: Peg = _SPECS[cfg.kit_name]
+    _PATHS[spec.name] = prim_path
     a = _Author(prim_path, translation, orientation)
     wood = a.look(spec.wood, rough=0.75)
     steel = a.look((0.75, 0.76, 0.78), rough=0.25, metal=0.9)
@@ -303,12 +355,12 @@ def _spawn_peg(prim_path: str, cfg, translation=None, orientation=None, **kwargs
     j.CreateLocalPos1Attr(Gf.Vec3f(0.0, 0.0, 0.0))
     j.CreateLocalRot1Attr(Gf.Quatf(1, 0, 0, 0))
     j.CreateLowerLimitAttr(float(-math.degrees(OPEN_MAX)))
-    j.CreateUpperLimitAttr(0.0)
+    j.CreateUpperLimitAttr(float(math.degrees(SHUT)))
     drive = UsdPhysics.DriveAPI.Apply(j.GetPrim(), "angular")
     drive.CreateTypeAttr("force")
     drive.CreateStiffnessAttr(float(spec.spring) * math.radians(1.0))   # per degree
     drive.CreateDampingAttr(float(spec.spring) * 0.02 * math.radians(1.0))
-    drive.CreateTargetPositionAttr(float(math.degrees(spec.preload)))
+    drive.CreateTargetPositionAttr(float(math.degrees(SHUT + spec.preload)))
     UsdPhysics.ArticulationRootAPI.Apply(stage.GetPrimAtPath(legs["leg_a"]))
     art = PhysxSchema.PhysxArticulationAPI.Apply(stage.GetPrimAtPath(legs["leg_a"]))
     art.CreateEnabledSelfCollisionsAttr(False)
@@ -427,6 +479,116 @@ def write_joint(environment, name: str, joint: str, *, limits=None, stiffness=No
         call("write_joint_state_to_sim", position=pos, velocity=torch.zeros_like(pos), joint_ids=ids, env_ids=[0])
 
 
+# -- joints ------------------------------------------------------------------------------------------------------------
+
+def joints(*specs) -> None:
+    """Declare the task's joints (see :class:`Joint`). The kit authors them at every reset."""
+    for j in specs:
+        _JOINTS[j.name] = j
+
+
+def _body_path(body) -> str:
+    name, sub = body
+    return _PATHS[name] + (f"/{sub}" if sub else "")
+
+
+def _joint_path(j: Joint) -> str:
+    return f"{_PATHS[j.body1[0]]}/{j.name}_joint"
+
+
+def _pose_w(environment, name: str):
+    """An object's root pose in the simulator's world frame."""
+    pose = _np(environment.unwrapped.scene[name].data.root_link_pose_w)[0]
+    return pose[:3], pose[3:7]
+
+
+def _author(environment, j: Joint) -> None:
+    """Author joint ``j`` from where its bodies are now: disabled first, its frames set, enabled last. The joint's
+    frame is body 1's own, at ``anchor1``."""
+    from isaaclab.sim.utils.stage import get_current_stage
+    from pxr import Gf, UsdPhysics
+
+    p1, q1 = _pose_w(environment, j.body1[0])
+    r1 = _rotation(q1)
+    world = p1 + r1 @ np.asarray(j.anchor1, float)
+    # The joint's frame in body 1: its own for a fixed joint; for a pivot, x along body 1's y (the free axis).
+    frame1 = np.array([[0.0, 0.0, 1.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]) if j.kind == "pivot" else np.eye(3)
+    if j.body0 is None:
+        local0, quat0 = world, _quat(r1 @ frame1)
+    else:
+        p0, q0 = _pose_w(environment, j.body0[0])
+        r0 = _rotation(q0)
+        local0, quat0 = r0.T @ (world - p0), _quat(r0.T @ r1 @ frame1)
+    quat1 = _quat(frame1)
+    stage = get_current_stage()
+    cls = UsdPhysics.Joint if j.kind == "pivot" else UsdPhysics.FixedJoint
+    joint = cls.Define(stage, _joint_path(j))
+    joint.CreateJointEnabledAttr().Set(False)
+    if j.body0 is not None:
+        joint.CreateBody0Rel().SetTargets([_body_path(j.body0)])
+    joint.CreateBody1Rel().SetTargets([_body_path(j.body1)])
+    joint.CreateLocalPos0Attr().Set(Gf.Vec3f(*(float(v) for v in local0)))
+    joint.CreateLocalRot0Attr().Set(Gf.Quatf(float(quat0[3]), Gf.Vec3f(*(float(v) for v in quat0[:3]))))
+    joint.CreateLocalPos1Attr().Set(Gf.Vec3f(*(float(v) for v in j.anchor1)))
+    joint.CreateLocalRot1Attr().Set(Gf.Quatf(float(quat1[3]), Gf.Vec3f(*(float(v) for v in quat1[:3]))))
+    joint.CreateExcludeFromArticulationAttr().Set(True)
+    joint.CreateCollisionEnabledAttr().Set(False)
+    if j.kind == "pivot":
+        prim = joint.GetPrim()
+        for axis in ("transX", "transY", "transZ"):                      # held in place (low above high: locked)
+            lim = UsdPhysics.LimitAPI.Apply(prim, axis)
+            lim.CreateLowAttr().Set(1.0)
+            lim.CreateHighAttr().Set(-1.0)
+        for axis in ("rotY", "rotZ"):                                    # leaning out of its plane: a little, sprung
+            lim = UsdPhysics.LimitAPI.Apply(prim, axis)
+            lim.CreateLowAttr().Set(-float(j.cone))
+            lim.CreateHighAttr().Set(float(j.cone))
+            drive = UsdPhysics.DriveAPI.Apply(prim, axis)
+            drive.CreateTypeAttr().Set("force")
+            drive.CreateStiffnessAttr().Set(float(j.flex))
+            drive.CreateDampingAttr().Set(float(j.flex) * 0.05)
+            drive.CreateTargetPositionAttr().Set(0.0)
+    joint.CreateBreakForceAttr().Set(float(j.force))
+    joint.CreateBreakTorqueAttr().Set(float(j.torque))
+    joint.CreateJointEnabledAttr().Set(True)       # last write, after the frames
+
+
+def release(name: str) -> None:
+    """Let joint ``name`` go for good."""
+    from isaaclab.sim.utils.stage import get_current_stage
+
+    j = _JOINTS.get(name)
+    if j is None or j.body1[0] not in _PATHS:
+        return
+    prim = get_current_stage().GetPrimAtPath(_joint_path(j))
+    if prim and prim.IsValid():
+        prim.GetAttribute("physics:jointEnabled").Set(False)
+
+
+def _disarm() -> None:
+    """Switch every joint off (before a reset puts the parts back)."""
+    for name in _JOINTS:
+        release(name)
+
+
+def _arm(environment) -> None:
+    """Join the parts as the reset left them."""
+    for j in _JOINTS.values():
+        _author(environment, j)
+
+
+def _wind(environment) -> None:
+    """Keep every peg's spring wound: its drive's target is the shut angle plus the peg's preload. (The simulator's
+    articulation layer would otherwise hold the target at zero, a spring with no preload.)"""
+    import torch
+
+    for name, spec in _SPECS.items():
+        if isinstance(spec, Peg):
+            asset = environment.unwrapped.scene[name]
+            target = torch.full((1, 1), float(SHUT + spec.preload), device=_t(asset.data.joint_pos).device)
+            asset.set_joint_position_target(target)
+
+
 def _kit_state(environment, spec) -> KitState:
     base = environment.unwrapped
     asset = base.scene[spec.name]
@@ -519,13 +681,42 @@ def _patch_embodiment(module) -> None:
 
     def _task_step(self, *a, **k):
         _ENV["env"] = self._env
+        _wind(self._env)
         for fn in _STEP:
             fn(self._env)
         return stock_step(self, *a, **k)
 
     def reset(self, *a, **k):
-        obs = stock_reset(self, *a, **k)
+        # The joints have to be whole before the reset's settling steps and first picture: switch them off, let the
+        # environment put the parts back, then author them afresh from where the parts are.
+        base, saved, had = None, None, False
+        if _JOINTS:
+            try:
+                self._ensure_sim(None)
+                base = self._env.unwrapped
+                env_reset = base.reset
+                saved, had = vars(base).get("reset"), "reset" in vars(base)
+
+                def reset_then_arm(*aa, **kk):
+                    _disarm()
+                    result = env_reset(*aa, **kk)
+                    _arm(self._env)
+                    return result
+
+                base.reset = reset_then_arm
+            except Exception as err:                     # noqa: BLE001
+                print(f"[pegkit] joints not re-armed around the reset: {err!r}", file=sys.stderr, flush=True)
+                base = None
+        try:
+            obs = stock_reset(self, *a, **k)
+        finally:
+            if base is not None:
+                if had:
+                    base.reset = saved
+                else:
+                    vars(base).pop("reset", None)
         _ENV["env"] = self._env
+        _wind(self._env)
         for fn in _RESET:
             fn(self._env)
         return obs
