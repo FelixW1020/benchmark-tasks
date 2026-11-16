@@ -126,7 +126,7 @@ state, and it does not read the force on the pencil.
 
 ## Scoring
 
-Tools: a ruler and the trial video.
+Tools: a ruler, the trial video, and two close-up cameras on the bob's point (one looking along x, one along y).
 
 - **P** is the point on the worktop directly below the hole. On a real bench it is found by letting the bob settle
   and looking under its point; in the simulator it is known.
