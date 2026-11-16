@@ -1,6 +1,7 @@
 """Demo for the game-disc task, run in the yam_arena embodiment.
 
-    python demo.py task.py out_dir [--window] [--max-steps 2400] [--no-record] [--mode load|open|nohold|nopress|still]
+    python demo.py task.py out_dir [--window] [--max-steps 2400] [--no-record]
+                                   [--mode load|open|nohold|nopress|partway|still]
 
 1. The left hand, closed and leaning out to its own side, presses its fingertips on the tray's finger ledge, through
    the recess in the cover's left edge: it holds the case down.
@@ -18,7 +19,8 @@
 
 Controls: ``--mode nohold`` lifts the cover's lip without holding the tray down (the whole case comes up, still
 shut); ``--mode open`` stops once the case is open; ``--mode nopress`` opens the case and then picks at the disc
-without pressing the hub; ``--mode still`` keeps both arms still.
+without pressing the hub; ``--mode partway`` does everything but stops with the disc 3.5 cm into the slot and holds
+it there (short of where the drive takes it); ``--mode still`` keeps both arms still.
 
 Open loop: every pose comes from the layout constants in the task file. Object states are read only to report
 where things ended up. Writes one MP4 per camera, setup.png (the first top-camera frame) and result.json.
@@ -186,6 +188,7 @@ LIFT = (0.015, 0.025)                    # straight up: off the hub's teeth, as 
                                          # the disc go; then, once they have let go, clear of the button for the carry
 CARRY_Z = 0.100                          # tool height while carrying, above the table (the disc's centre in the slot)
 SLOT_IN = 0.077                          # leading edge this far into the slot before letting go (the drive takes at 7)
+PART_IN = 0.035                          # the 'partway' control stops with the leading edge this far in
 DOWN = frame((0.0, 0.0, -1.0), (1.0, 0.0, 0.0))        # straight down, fingers closing along x
 LEVEL = frame((1.0, 0.0, 0.0), (0.0, 0.0, 1.0))        # pointing forward, fingers one above the other
 UPRIGHT = frame((1.0, 0.0, 0.0), (0.0, -1.0, 0.0))     # pointing forward, fingers side by side: the disc upright
@@ -288,6 +291,10 @@ def script(T, left, right, mode: str = "load"):
     yield from chain(right.move(front, 2.0), wait(0.3))                     # down to the slot's height, facing it
     q = right.joints_for(front, UPRIGHT, seed=np.r_[right.q[:5], 0.0])
     yield from chain(right.move_joints(q, 3.0), wait(0.5))                  # stand the disc upright
+    if mode == "partway":                                                   # control: 3.5 cm in, held there
+        yield from right.move(np.array([T.FACE_X + PART_IN - reach_back, T.SLOT_Y, front[2]]), 2.0)
+        yield from wait(3.0)
+        return
     reach = T.FACE_X + SLOT_IN - reach_back                                 # tool x with the leading edge SLOT_IN in
     yield from right.move(np.array([reach, T.SLOT_Y, front[2]]), 3.0)      # into the slot
     yield from chain(right.set_grip(1.0, 0.4), wait(0.2))                  # let go: the drive draws it in
@@ -404,7 +411,7 @@ if __name__ == "__main__":
     ap.add_argument("--max-steps", type=int, default=2400)
     ap.add_argument("--window", action="store_true", help="show the Isaac Sim window on the instance's desktop")
     ap.add_argument("--no-record", action="store_true")
-    ap.add_argument("--mode", default="load", choices=("load", "open", "nohold", "nopress", "still"))
+    ap.add_argument("--mode", default="load", choices=("load", "open", "nohold", "nopress", "partway", "still"))
     ap.add_argument("--trace-every", type=int, default=5, help="steps between entries of the trace in result.json")
     a = ap.parse_args()
     sys.path.insert(0, str(Path(a.task).resolve().parent))

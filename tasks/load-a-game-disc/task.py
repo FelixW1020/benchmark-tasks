@@ -79,7 +79,10 @@ TAKE_TILT = math.radians(10)            # ... standing within this of upright (s
 TAKE_OFF = (0.0025, 0.012)              # ... and centred: across the slot, and up and down
 SEATED = FACE_X + 0.072                 # where the drive draws the disc's centre to (its trailing edge 12 mm inside)
 DRAW = 0.004                            # m per control step the drive draws it in (8 cm/s)
-IN_SLOT = 0.020                         # leading edge this far into the slot
+IN_SLOT = 0.020                         # the disc is "in the slot" with its leading edge this far behind the face ...
+IN_TILT = math.radians(15)              # ... standing within this of upright and square to the slot ...
+SLOT_SLACK = 0.001                      # ... and all of it that is behind the face between the slot's sides and its
+                                        # top and bottom ends, to within this
 OFF_HUB = 0.010                         # disc centre this far from its place on the hub: off the hub
 DROPPED = 0.003                         # disc's lowest point this close to the table, outside the console: dropped
 PRESSED = -0.0015                       # the hub button pressed this far: the teeth draw in
@@ -163,7 +166,7 @@ _STATE: dict = {}
 
 def _clear() -> None:
     _STATE.update(latched=True, opened=False, off_hub=False, in_slot=False, taking=False, taken=False, dropped=False,
-                  teeth_in=False, draw_x=None, pressed_max=0.0, depth_max=-1.0, cover_max=0.0)
+                  teeth_in=False, draw_x=None, pressed_max=0.0, depth_max=-1.0, slot_max=-1.0, cover_max=0.0)
 
 
 _clear()
@@ -180,6 +183,36 @@ def disc_geometry(pos, quat):
 def centred(pos, axis) -> bool:
     return (abs(pos[1] - SLOT_Y) <= TAKE_OFF[0] and abs(pos[2] - (TOP + SLOT_Z)) <= TAKE_OFF[1]
             and abs(axis[1]) >= math.cos(TAKE_TILT))
+
+
+def slot_depth(pos, quat) -> float:
+    """How far the disc is in the slot (m): how far its leading edge is behind the console's front face, counted only
+    while the disc is physically in the slot. That needs it standing within IN_TILT of upright and square to the slot,
+    and every part of it that is behind the face lying inside the slot's opening: between the slot's two sides (the
+    flared mouth's at the face) and between its top and bottom ends. Anything else gives -1: a disc lying flat, a disc
+    held over the console or beside the slot, however far "forward" it is."""
+    pos = np.asarray(pos, float)
+    rot = K._rotation(quat)
+    axis = rot[:, 2]
+    if abs(axis[1]) < math.cos(IN_TILT):
+        return -1.0
+    turn = np.linspace(0.0, 2 * math.pi, 144, endpoint=False)
+    rim = pos + K.DISC_R * (np.outer(np.cos(turn), rot[:, 0]) + np.outer(np.sin(turn), rot[:, 1]))
+    pts = np.vstack([rim + K.DISC_T / 2 * axis, rim - K.DISC_T / 2 * axis])
+    behind = pts[pts[:, 0] > FACE_X]
+    if len(behind) == 0:
+        return -1.0
+    half = np.where(behind[:, 0] > FACE_X + MOUTH_D, SLOT_W / 2, MOUTH_W / 2) + SLOT_SLACK
+    across = np.abs(behind[:, 1] - SLOT_Y) <= half
+    along = np.abs(behind[:, 2] - (TOP + SLOT_Z)) <= SLOT_H / 2 + SLOT_SLACK
+    if not (across.all() and along.all()):
+        return -1.0
+    return float(pts[:, 0].max() - FACE_X)
+
+
+def went_in(pos, quat) -> bool:
+    """The disc is at least IN_SLOT (2 cm) inside the slot: upright, and physically in it (see ``slot_depth``)."""
+    return slot_depth(pos, quat) >= IN_SLOT
 
 
 def opened(swing, pos, quat) -> bool:
@@ -228,7 +261,8 @@ def _watch(environment) -> None:
     hub_home = np.asarray(case.pos) + K._rotation(case.quat_xyzw) @ np.array([0.0, 0.0, K.FLOOR + K.SEAT_H + K.DISC_T / 2])
     s["off_hub"] = s["off_hub"] or float(np.linalg.norm(pos - hub_home)) > OFF_HUB
     inside = depth > 0.0 and centred(pos, axis)
-    if depth >= IN_SLOT and abs(pos[1] - SLOT_Y) <= 0.004:
+    s["slot_max"] = max(s["slot_max"], slot_depth(pos, quat))
+    if went_in(pos, quat):
         s["in_slot"] = True
     if not inside and not s["taking"] and low <= TOP + DROPPED:
         s["dropped"] = True
@@ -243,7 +277,9 @@ def _watch(environment) -> None:
 # -- scoring --------------------------------------------------------------------------------------------------------
 def score(objects) -> float:
     """0 if the disc ever touched the table outside the console (dropped). Otherwise 1.0 once the drive has taken
-    it; 0.75 if it went at least 2 cm into the slot; 0.5 if it came off the hub; 0.25 if the case was opened (its
+    it; 0.75 if it stood in the slot at least 2 cm deep (upright and square to the slot within 15 degrees, and all of
+    it that was behind the console's face inside the slot's opening: a disc over the console, beside the slot or lying
+    flat does not count, however far forward it is); 0.5 if it came off the hub; 0.25 if the case was opened (its
     cover swung upright or beyond while its tray half lay flat on the box); 0 otherwise."""
     s = _STATE
     if s["dropped"]:
@@ -266,7 +302,8 @@ def report(objects) -> dict:
     return {"snap_let_go": not s["latched"], "opened": s["opened"], "cover_max_deg": round(math.degrees(s["cover_max"]), 1),
             "off_hub": s["off_hub"], "in_slot": s["in_slot"], "taking": s["taking"], "taken": s["taken"],
             "dropped": s["dropped"], "button_min_mm": round(1000 * s["pressed_max"], 2),
-            "depth_max_mm": round(1000 * s["depth_max"], 1), "score": score(objects)}
+            "depth_max_mm": round(1000 * s["depth_max"], 1), "in_slot_max_mm": round(1000 * s["slot_max"], 1),
+            "score": score(objects)}
 
 
 def demo(objects, seed):

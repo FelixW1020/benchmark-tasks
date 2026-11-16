@@ -50,7 +50,8 @@ which the case's thumb cut-out leaves free, and it has to be turned from lying f
 | `task.py` | The task file: scene, the case's catch, the hub's teeth, the console's drive, scoring, the instruction |
 | `disckit.py` | Builds the disc, the case (an articulation: tray, spine and cover on two hinges, hub button on a sprung slide, three teeth on radial slides) and the fixed parts |
 | `demo.py` | The scripted demo, and its control runs |
-| `test_scoring.py` | Offline tests of the scoring rule, the catch and the disc geometry (no simulator) |
+| `test_scoring.py` | Offline tests of the scoring rule, the catch, the disc geometry and the slot rule (no simulator) |
+| `case_template.svg` | 1:1 cutting template for the two openings a stock game case needs (see Real-world build) |
 | `task.json` | The submission's details |
 
 ## Requirements
@@ -76,6 +77,7 @@ python demo.py task.py out_dir                  # layout A; DISC_LOT=B for layou
 python demo.py task.py out_dir --mode nohold    # control: lift the cover's lip without holding the tray down
 python demo.py task.py out_dir --mode open      # control: open the case and stop
 python demo.py task.py out_dir --mode nopress   # control: open the case, then lift the disc without pressing the hub
+python demo.py task.py out_dir --mode partway   # control: everything, but stop with the disc 3.5 cm into the slot
 ```
 
 1. The left hand, closed and leaning out to its own side, presses its fingertips on the tray's finger ledge, which
@@ -105,13 +107,18 @@ Tools: the trial video and a ruler.
 - Otherwise:
   - **1.0** once the drive has taken the disc: it went in upright (within 10 degrees), centred in the slot (within
     2.5 mm across it and 12 mm up or down) and 7 cm deep, and was drawn in;
-  - **0.75** if the disc went at least 2 cm into the slot;
+  - **0.75** if the disc stood in the slot at least 2 cm deep: its leading edge 2 cm or more behind the console's
+    front face while the disc was upright and square to the slot (within 15 degrees) and every part of it behind
+    the face was inside the slot's opening, between the slot's two sides and between its top and bottom ends. A
+    disc held over the console, beside the slot or lying flat (still in its case, say) is not in the slot, however
+    far forward it is;
   - **0.5** if the disc came off the hub (its centre 1 cm or more from its place on the hub);
   - **0.25** if the case was opened where it lies (its cover swung upright, 90 degrees from shut, or further, while
     its tray half lay flat on the box, within 20 degrees and 1 cm);
   - **0** otherwise. Freeing the catch without swinging the cover open earns nothing.
 
-In code: `_watch()` (the catch, the teeth, the drive and what happened during the trial) and `score()` in `task.py`.
+In code: `_watch()` (the catch, the teeth, the drive and what happened during the trial), `slot_depth()` (whether
+and how far the disc is in the slot, from its position, height and orientation) and `score()` in `task.py`.
 The catch lets go once the cover has turned 1.5 degrees (3.7 mm at the lip) against its spring. The teeth draw in
 while the button is pressed 1.5 mm or more.
 
@@ -119,13 +126,19 @@ while the button is pressed 1.5 mm or more.
 
 | Run | Score | Notes |
 |---|---|---|
-| Scripted demo, layout A | 1.0 | Catch free at step 115, case open at 360, disc off the hub at 585, drawn in by the drive at step 875 (44 s). The tray half moved 1 mm while the case was opened |
+| Scripted demo, layout A | 1.0 | Catch free at step 115, case open at 360, disc off the hub at 585, 2 cm into the slot at 835, drawn in by the drive at step 875 (44 s) |
 | Scripted demo, layout B | 1.0 | Same script; drawn in at step 870 |
-| Control: lift the cover's lip without holding the tray | 0.0 | The whole case tipped up 18 degrees on the fingertips, still shut; the catch never let go |
+| Control: stop with the disc partway into the slot | 0.75 | The disc stood 3.3 cm into the slot, upright, short of the 7 cm at which the drive takes it |
 | Control: open the case, then lift the disc without pressing the hub | 0.25 | The case was opened; the teeth held the disc, the case came away with it and the disc never left the hub |
-| Dream-1, 2,400 steps | 0.0 | Both arms folded down near their bases and stayed there; neither touched the case, which stayed shut |
+| Control: lift the cover's lip without holding the tray | 0.0 | The whole case tipped up 18 degrees on the fingertips, still shut; the catch never let go (run before this revision; the rule it tests is unchanged) |
+| Dream-1, 2,400 steps | 0.0 | Both arms folded down near their bases and stayed there; neither touched the case, which stayed shut (run before this revision: the disc never left its shut case on the box, so the slot rule was not in play) |
 | Arms still | 0.0 | The case stays shut |
-| `pytest test_scoring.py` | 10 passed | Score tiers, the drop gate, the opened rule, the catch's numbers, the case's fit, the disc's geometry (flat and upright in the slot), and constants |
+| `pytest test_scoring.py` | 13 passed | Score tiers, the drop gate, the opened rule, the catch's numbers, the case's fit, the disc's geometry, the slot rule (a shut case carried over the console at any height earns no insertion credit; an upright disc over or beside the slot does not count; only an upright disc inside the opening does), and constants |
+
+A shut case cannot be carried over this console by these arms in the simulator (the console is 30 cm tall), so that
+case is covered by the offline test, which places the disc flat over the console's top with its leading edge 5 cm
+beyond the front face and on the slot's line, the pose the earlier rule would have credited, and at every height
+below it.
 
 ## Runtime and seeds
 
@@ -151,11 +164,33 @@ About 4 minutes per demo run and 11 minutes per Dream-1 run on one L40S, includi
 
 A standard Blu-ray-style game case (135 x 171 x 15 mm shut) with a press-to-release hub and a 120 mm game disc on the
 hub, snapped shut and laid cover up on a storage box 8.5 cm tall, 28 cm long and 18 cm wide, its opening edge toward
-the robot and overhanging the box by 2.75 cm. The case has a thumb cut-out (44 x 32 mm) in the middle of the tray's
-opening edge, and a finger recess (32 x 30 mm) in the cover's left edge, 22 mm from the opening edge, that leaves a
-20 x 25 mm ledge of the tray's rim showing. A slot-loading games console standing upright, its slot 10 cm above the
-table, at the positions in `task.json`. Check the catch's opening pull with a spring scale at the lip (about 1.2 N),
-and check the disc for scratches after each trial.
+the robot and overhanging the box by 2.75 cm. A slot-loading games console standing upright, its slot 10 cm above the
+table, at the positions in `task.json`. Check the disc for scratches after each trial.
+
+### Preparing the case
+
+The case is the ordinary single-disc game case with a push-button hub, sold empty as a replacement case. Its hub is
+used as it comes. A stock case has only a shallow finger notch at its opening edge, so the task's two openings are
+cut, the same way every time, with the template `case_template.svg` (print it at 100% and check its 50 mm bar):
+
+1. **Thumb cut-out in the tray half.** In the middle of the tray's opening edge, cut out a rectangle 44 mm across
+   and 32 mm deep, through the tray's floor and its rim. It leaves the disc's edge free to be pinched there.
+2. **Finger recess in the cover.** In the cover's left edge, cut out a rectangle 32 mm along the edge and 30.5 mm
+   deep, starting 22 mm from the opening edge. Remove the printed sleeve's corner with it.
+3. **Ledge.** Under the recess, glue a block 20 mm (along the edge) by 25 mm on the tray's floor against its left
+   rim, built up from offcuts of step 1 until its top is level with the rim's top (about 6 mm). It shows through the
+   recess: this is the ledge the holding hand presses on. It must stay 2 mm clear of the disc's edge.
+4. **Tools and finish.** The case is polypropylene: a sharp craft knife and a steel rule, or tin snips, cut it.
+   File the cut edges smooth so they cannot scratch the disc. Cuts within 1 mm of the template are close enough.
+
+Then check each prepared case before it is used:
+
+- **Catch.** Hold the tray half down and pull the cover's lip up at the thumb cut-out with a spring scale: it should
+  let go at about 1.2 N (1.0 to 1.4 N passes). A catch that is stiffer can be eased by shaving the cover's two
+  moulded clips with the knife, a little at a time. Lifting the lip of the unheld shut case must still pick the
+  whole case up (it weighs 86 g with its disc): that is the reason the task needs two hands.
+- **Hub.** The disc must stay on when lifted by its edge, and come off freely while the button is pressed.
+- **Marks.** Tape marks on the box for the case's corners; the hub's axis at the position in `task.json`.
 
 ## Third-party assets
 

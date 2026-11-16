@@ -104,8 +104,56 @@ def test_geometry_of_an_upright_disc_in_the_slot():
     assert not T.centred(pos, T.disc_geometry(pos, tilted)[0])
 
 
+def flat_in_its_case(x, y, z):
+    """The disc lying flat (as it does on the hub of a shut case) with its centre at x, y and z above the table."""
+    return np.array([x, y, T.TOP + z]), (0.0, 0.0, 0.0, 1.0)
+
+
+def test_a_shut_case_carried_over_the_console_is_not_in_the_slot():
+    # the disc still on its hub, flat, 2 cm over the console's top, its leading edge 5 cm beyond the front face and
+    # its centre on the slot's line: the old rule (forward distance and sideways position only) called this "inserted"
+    pos, quat = flat_in_its_case(T.FACE_X + 0.05 - K.DISC_R, T.SLOT_Y, T.CONSOLE["height"] + 0.02)
+    axis, low, forward = T.disc_geometry(pos, quat)
+    assert forward == pytest.approx(0.05) and abs(pos[1] - T.SLOT_Y) < 0.004
+    assert T.slot_depth(pos, quat) == -1.0
+    assert not T.went_in(pos, quat)
+    # ... and the same at every height from the table to well over the console, and at every forward distance
+    for z in np.arange(0.0, T.CONSOLE["height"] + 0.10, 0.005):
+        for ahead in (0.02, 0.05, 0.08, 0.12):
+            assert not T.went_in(*flat_in_its_case(T.FACE_X + ahead - K.DISC_R, T.SLOT_Y, z))
+
+
+def test_an_upright_disc_over_or_beside_the_slot_is_not_in_it():
+    over = np.array([T.FACE_X - K.DISC_R + 0.05, T.SLOT_Y, T.TOP + T.CONSOLE["height"] + K.DISC_R + 0.01])
+    assert not T.went_in(over, T.UPRIGHT_Q)                                   # upright, but over the console
+    high = np.array([T.FACE_X - K.DISC_R + 0.05, T.SLOT_Y, T.TOP + T.SLOT_Z + 0.03])
+    assert not T.went_in(high, T.UPRIGHT_Q)                                   # 3 cm too high for the slot's top end
+    beside = np.array([T.FACE_X - K.DISC_R + 0.05, T.SLOT_Y + 0.010, T.TOP + T.SLOT_Z])
+    assert not T.went_in(beside, T.UPRIGHT_Q)                                 # 1 cm to one side of the slot
+
+
+def test_only_an_upright_disc_inside_the_slot_counts_as_in_it():
+    def at(depth, dy=0.0, dz=0.0):
+        return np.array([T.FACE_X - K.DISC_R + depth, T.SLOT_Y + dy, T.TOP + T.SLOT_Z + dz])
+
+    assert T.slot_depth(at(0.030), T.UPRIGHT_Q) == pytest.approx(0.030)
+    assert T.went_in(at(0.020), T.UPRIGHT_Q) and T.went_in(at(0.069), T.UPRIGHT_Q)
+    assert not T.went_in(at(0.019), T.UPRIGHT_Q)                              # not yet 2 cm in
+    assert T.went_in(at(0.030, dy=0.002, dz=0.004), T.UPRIGHT_Q)              # within the slot's clearances
+    assert not T.went_in(at(0.030, dy=0.004), T.UPRIGHT_Q)                    # through the slot's side
+    assert T.went_in(at(0.030, dz=0.008), T.UPRIGHT_Q)                        # 3 cm in, the disc's cap still clears the top end
+    assert not T.went_in(at(0.030, dz=0.030), T.UPRIGHT_Q)                    # through the slot's top end
+    lean = math.radians(20)                                                   # leaning 20 degrees out of upright
+    leaning = (math.sin(math.pi / 4 + lean / 2), 0.0, 0.0, math.cos(math.pi / 4 + lean / 2))
+    assert abs(T.disc_geometry(at(0.030), leaning)[0][1]) == pytest.approx(math.cos(lean))
+    assert not T.went_in(at(0.030), leaning)
+    assert not T.went_in(at(0.030), (0.0, 0.0, 0.0, 1.0))                     # lying flat at the slot's height
+
+
 def test_constants_are_consistent():
     assert T.IN_SLOT < T.TAKE_AT < 2 * K.DISC_R
+    assert T.TAKE_TILT < T.IN_TILT                                   # a disc the drive can take is also "in the slot"
+    assert T.TAKE_OFF[0] <= T.SLOT_W / 2 + T.SLOT_SLACK and T.TAKE_OFF[1] + K.DISC_R <= T.SLOT_H / 2 + 0.008
     assert T.SEATED - K.DISC_R > T.FACE_X                            # a seated disc is wholly inside
     assert T.SEATED + K.DISC_R < T.FACE_X + T.BAY                    # ... and inside the drive bay
     assert 2 * K.DISC_R < T.SLOT_H and K.DISC_T < T.SLOT_W < T.MOUTH_W
