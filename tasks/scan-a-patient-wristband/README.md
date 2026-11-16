@@ -110,8 +110,9 @@ grasp point at least 30 mm from the thing. *Back*: the forearm within 10 deg of 
 10 deg/s. Success is a score of 1.0 held for 1 s.
 
 In a real trial the scanner itself decides the read: its beep and green flash, and the record it sends its host.
-The forearm's speed is judged from video (a quarter turn in under 0.45 s is too fast), its final angle with a
-protractor or a level laid on the back of the hand, and the release from a photo.
+The forearm's speed is judged from video filmed end-on against a protractor dial: too fast is a change of more than
+10 degrees between two frames 50 ms apart (see "Measuring 'too fast' from video" below). Its final angle is read
+with a protractor or a level laid on the back of the hand, and the release from a photo.
 
 ## Verification
 
@@ -172,11 +173,91 @@ Nearby tasks, and how this differs:
 
 ## Real-world build
 
-- An adult training arm cut or jointed at the elbow (forearm and hand, about 46 cm and 1.2 kg), its elbow end on a
-  horizontal shaft in a bearing block clamped to the table, with a light torsion spring (0.6 N mm/deg) and a stop
-  at palm down. An arm-positioning block under the forearm, 3 mm clear of it.
+- The training arm on its sprung pivot: see **Building the arm fixture** below and the drawing `fixture.svg`.
+- An arm-positioning block (vinyl-covered foam, 90 x 261 x 75 mm) under the forearm, 3 mm clear of it.
 - A 1 in adult thermal wristband printed with one 10 mil Data Matrix, fastened snug with the symbol under the
   wrist.
 - A Zebra DS2278-HC (or any cordless pistol-grip imager) in handheld trigger mode, paired to a host that logs
   reads, lying on its left side on tape marks. Its aimer and illumination are eye-safe LEDs.
 - Reset: lay the scanner back on its marks; the forearm returns by itself; check the band has not slipped.
+
+## Building the arm fixture
+
+![The fixture: side view, end view of the stop, parts and the spring](fixture.svg)
+
+The fixture is a shaft in two bearings with a torsion spring and a stop, built from catalogue parts, a block of
+wood and a plywood disc. No machining is needed beyond drilling, a file and a saw. **It is a design: it has not been
+built.** The spring's rate is calculated, so the check at the end is part of the build, not an option.
+
+### Parts
+
+| No. | Part | Size | Notes |
+|---|---|---|---|
+| 1 | Pillow-block bearing, two | 8 mm bore (the "KP08" size: fixing holes 42 mm apart) | Shielded, not rubber-sealed, or with the seals taken out: seal drag would keep the arm from coming all the way back |
+| 2 | Steel shaft | 8 mm diameter, 70 mm long | File a small flat where each set screw bears |
+| 3 | Rigid flange coupling | 8 mm bore | Joins the shaft to the arm. One of its set screws is replaced by an M4 x 16 screw that stands 12 mm proud: the stop pin |
+| 4 | Shaft collar | 8 mm bore | Its set screw is replaced by an M4 x 16 screw: the pin the spring's moving leg bears on |
+| 5 | Torsion spring | 1.0 mm round music wire, 12 mm mean coil diameter (11 inside, 13 outside), 7.75 turns, two straight 25 mm legs | 35 N mm/rad, calculated below. A stock spring of 0.55 to 0.65 N mm/deg that fits over an 8 mm shaft and allows 180 degrees does as well |
+| 6 | Stop post | M5 x 40 screw with a rubber sleeve (fuel hose or heat-shrink) | Stands in the riser's top beside the coupling |
+| 7 | Adapter disc | 9 mm plywood, 56 mm across | Bolted to the coupling's flange, screwed to the arm |
+| 8 | Riser | Hardwood or aluminium block, 70 x 65 mm, height 108 mm minus the bearing's centre height (93 mm for a 15 mm centre height) | Bolted to the table, or to a base plate clamped to it (then take the plate's thickness off the riser) |
+| 9 | Cover (optional) | Thin sheet or printed box, 70 x 76 x 148 mm, open toward the hand | Makes the fixture look like the simulated block and keeps fingers out |
+| | Training arm | An adult injection or IV training arm cut or jointed at the elbow: forearm and hand, about 455 mm and 1.2 kg | |
+
+Measure your bearing's centre height before cutting the riser: the one dimension that has to come out right is the
+shaft's axis, 108 mm above the table. The simulated bearing block is 70 x 56 x 148 mm; this fixture under its cover is
+20 mm longer at the back, away from the arm, where nothing in the task reaches.
+
+### How it goes together
+
+1. **Bearings on the riser.** Screw the two pillow blocks to the riser's top, in line, 21 mm apart (47 mm over
+   both), their bores along the riser's 65 mm length. Slide the shaft through both. It must turn freely.
+2. **Collar and spring between the bearings.** On the shaft between the bearings go the collar (4), toward the back,
+   and the torsion spring, toward the arm. One spring leg bears on the collar's long screw; the other bears on an M4
+   screw driven into the riser's top beside the spring. Leave the collar loose for now.
+3. **Arm on the shaft.** Find the centre of the arm's elbow end (the middle of its cut face) and screw the adapter
+   disc to it, centred: four 4 x 30 mm wood screws into a rigid core, or, for a foam-filled arm, glue the disc on with
+   construction adhesive and add two screws. Bolt the coupling's flange to the disc, centred, marking the holes from
+   the flange itself. Push the coupling onto the shaft's front end and tighten its set screws, with the long screw
+   (the stop pin) leaning about 45 degrees toward the robot's side when the arm is palm down (drawing, view B).
+4. **Balance.** With the spring's leg lifted off its pin, the arm should stay where it is put at palm down, at a
+   quarter turn and halfway. If it rolls to one side, the arm's centre of mass is off the shaft's axis: screw a
+   stack of washers to the adapter disc on the light side until it stays.
+5. **Stop.** Hold the arm palm down (a small level on the back of the hand) and drive the stop post into the
+   riser's top so that its rubber sleeve just touches the stop pin from the robot's side. The arm can now turn
+   toward thumb up but not the other way. Check that at 170 degrees the pin still clears the riser.
+6. **Zero the spring.** With the arm palm down against the stop, turn the collar on the shaft until both spring
+   legs just touch their screws, then tighten it. Up to 5 degrees of wind-up at palm down is acceptable (it holds
+   the arm against the stop and changes the quarter-turn force by under 6%).
+7. **Arm board.** Stand the board under the forearm; pack it until a 3 mm feeler passes between it and the forearm.
+
+### The return torque, and how to check it
+
+The task needs 0.035 N m/rad: 0.055 N m to hold the forearm a quarter turn over. For a round-wire torsion spring the
+rate per radian is `E d^4 / (64 D n)` (E the wire's modulus, d the wire, D the mean coil diameter, n the turns):
+with music wire (E about 206,000 N/mm^2), d = 1.0 mm, D = 12 mm and n = 7.75 it is 34.6 N mm/rad. The rate goes with
+the fourth power of the wire's diameter, so a wire 0.02 mm off changes it by 8%. That is why the fixture is accepted
+on a measurement, not on the spring's label:
+
+- **Holding force.** Hook a spring scale (or a luggage scale) to the edge of the hand, 40 mm from the shaft's axis,
+  and hold the forearm a quarter turn over, pulling square to the palm. It should read 1.4 N (143 g); 1.2 to 1.6 N
+  passes. Too high: use a spring with more turns or thinner wire; too low: fewer turns.
+- **Return.** Let the forearm go from a quarter turn, five times. Each time it must come back to within 5 degrees
+  of palm down (level on the back of the hand) and stay there. If it stops short, the bearings drag: take their
+  seals out, or allow the 5 degrees of wind-up in step 6.
+- **Bearing drag.** With the spring's leg lifted off, a 10 g weight hung at the hand's edge (4 mN m) should start the
+  arm turning.
+
+The simulated pivot also has a little viscous damping (0.003 N m s/rad); the bearings' grease stands in for it, and
+it is not adjusted. A lighter or slimmer arm than the simulated one rolls back faster when let go; that does not
+change the task, whose limit is on how fast the forearm is turned, measured as below.
+
+### Measuring "too fast" from video
+
+The limit is on the forearm's turning speed at any moment, not on the average over a quarter turn. Film the hand
+end-on (camera on the forearm's axis, beyond the fingertips) at 60 frames a second or more, with a printed
+protractor dial of at least 15 cm fixed behind the hand, centred on the axis, and a straight strip of tape along the
+back of the hand as the pointer. Read the pointer's angle on frames 50 ms apart (every third frame at 60 frames a
+second, every sixth at 120). **Too fast: the angle changes by more than 10 degrees between two such frames at any
+time in the trial.** That is 200 deg/s averaged over 50 ms, which is what the simulator checks at each 50 ms control
+step. For a forearm let go from a quarter turn the 50 ms average is within 1% of the peak speed.
