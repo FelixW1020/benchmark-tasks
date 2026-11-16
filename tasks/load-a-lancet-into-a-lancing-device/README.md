@@ -54,14 +54,38 @@ holding the device and the device comes too. Push the cap on short of its snap a
 - No task on the board has a lancet, a lancing device or a fingerstick (searched titles, descriptions and reviews on
   the day of submission).
 
-## Where this comes up
+## Why it matters: help with blood-glucose testing
 
-- **At home, every day.** 38.4 million people in the United States have diabetes (CDC, National Diabetes Statistics
-  Report), and every fingerstick glucose check starts with a lancing device. Loading a new lancet is small, fiddly
-  work with a needle in it, the kind of step a person with poor eyesight, tremor or weak hands needs help with, and
-  where a home assistive robot would be asked to do it.
-- **Care work.** Family carers and home care aides set up glucose checks for the people they look after. (Clinics use
-  single-use safety lancets instead; a pen device like this one belongs to one person.)
+The task is submitted in the **Other** domain. Its case is assistive care for people with diabetes.
+
+- **Scale.** 589 million adults were living with diabetes in 2024
+  ([IDF Diabetes Atlas, 11th edition](https://idf.org/news-and-resources/news/idf-diabetes-atlas-11th-edition/)). In
+  the United States the figure is 38.4 million people, and 16.5 million of them are aged 65 or over
+  ([CDC, National Diabetes Statistics Report](https://www.cdc.gov/diabetes/php/data-research/index.html)). Between a
+  quarter and a third of people living in long-term care have diabetes (American Diabetes Association position
+  statement on long-term care, 2016, as reported by
+  [U.S. Pharmacist](https://uspharmacist.com/article/diabetes-in-longtermcare-and-skilled-nursing-facilities-the-ada-position-statement)).
+- **Every fingerstick check starts with this step, and it cannot be done in advance with someone else's device.** A
+  pen lancing device belongs to one person. CDC's guidance for blood glucose monitoring reads "Never use fingerstick
+  devices for more than one person" and "Never reuse lancets"
+  ([CDC, infection control for blood glucose monitoring](https://www.cdc.gov/injection-safety/hcp/infection-control/index.html)).
+  Among that page's references is a report of hepatitis B virus transmitted among people having their blood glucose
+  monitored in long-term-care facilities (MMWR 2005;54:220-223). So whoever helps has to load a fresh lancet into
+  the person's own device, at the person's side, each time.
+- **Who needs the help.** Loading a lancet is small work with a needle in it: a 4 mm part into a 4.8 mm socket, a
+  6 mm tab to twist off, a cap to refit over a bare point. People with diabetes and memory loss often cannot monitor
+  their own glucose reliably by fingerstick, and their carers take the work on (reviewed in
+  [Donat Ergin et al., 2025](https://ueaeprints.uea.ac.uk/103015/1/donat-ergin-et-al-2025-continuous-glucose-monitoring-in-older-people-with-diabetes-mellitus-and-cognitive-impairment-a.pdf)).
+  Poor sight and numb fingers, both known complications of long-standing diabetes, and a tremor make the same step
+  hard. No figure was found for how many people need help with this one step, and none is claimed here.
+- **Who gives it now.** Family carers and home care aides. Nearly four million people work as home health or personal
+  care aides in the United States (Bureau of Labor Statistics, as reported by
+  [NBC News](https://www.nbcnews.com/business/economy/eldercare-workers-job-growth-pressure-rcna258820), February
+  2026). Clinics and care homes that test many people use single-use lancets instead; the pen device in this task is
+  the one a person uses at home.
+- **What a robot that can do it changes.** With the device loaded and cocked for them, a person who can still press
+  it to a fingertip keeps doing their own test, at the times their treatment needs, without waiting for a carer's
+  visit.
 - **The same skills elsewhere.** Pen injectors, insulin pen needles, twist-off ampoule and dropper tips, and
   spring-loaded tools that are cocked by pulling a sleeve all combine a held body, a small push fit and a twist-off.
 
@@ -240,6 +264,10 @@ left).
   off, that the cap is fully on, the cocked indicator, and where the grippers were while the needle was bare.
 - **Safety:** lancets are sterile, single-use and needle-pointed. Use a new one for each trial, do not fire the
   device, and put used lancets in a sharps container. No person holds the device during a trial.
+- **Protecting the grippers:** in a failed trial a bare needle can meet a soft gripper pad and puncture it. Either
+  blunt the needle of each trial lancet beforehand (file its point flat; the twist-off tab, the body and the fits
+  are unchanged) or fit thin puncture-resistant covers over the pads. Either way, a gripper touching the needle is
+  still scored from the close-up video, as above.
 
 ## Third-party assets
 
