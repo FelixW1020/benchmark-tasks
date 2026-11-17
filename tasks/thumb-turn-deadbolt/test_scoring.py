@@ -28,9 +28,26 @@ def crank_angle(bolt_mm: float) -> float:
     return math.acos(min(1.0, (12.5 - bolt_mm) / (12.5 * math.sqrt(2)))) - math.pi / 4
 
 
-def states(gap_mm=12.11, bolt_mm=0.0):
-    """Fake states with the door's latch edge ``gap_mm`` off its stop and the bolt ``bolt_mm`` out (turn follows)."""
-    q = {"door_hinge": -gap_mm / 1000 / T.LATCH_R, "bolt_slide": bolt_mm / 1000, "turn": crank_angle(bolt_mm)}
+PLAY = 1000 * (T.SLOT - T.PIN) / 2      # mm: the pin's play in the bolt's slot, either side of centre (0.5)
+
+
+def pushed_out(turn: float) -> float:
+    """The bolt's travel (mm) with the thumb-turn at ``turn`` degrees, turning toward locked: the pin pushes the
+    slot's leading wall, so the bolt trails the pin's centre by the play."""
+    a = math.radians(turn)
+    return 12.5 * (1 - math.cos(a) + math.sin(a)) - PLAY
+
+
+def turned_to(bolt_mm: float) -> float:
+    """The thumb-turn's angle (deg) that has pushed the bolt ``bolt_mm`` out: the inverse of ``pushed_out``."""
+    return math.degrees(crank_angle(bolt_mm + PLAY)) if bolt_mm > 0 else 0.0
+
+
+def states(gap_mm=12.11, bolt_mm=0.0, turn=None):
+    """Fake states with the door's latch edge ``gap_mm`` off its stop, the bolt ``bolt_mm`` out and the thumb-turn at
+    ``turn`` degrees (default: the angle that pushes the bolt that far out)."""
+    turn = turned_to(bolt_mm) if turn is None else turn
+    q = {"door_hinge": -gap_mm / 1000 / T.LATCH_R, "bolt_slide": bolt_mm / 1000, "turn": math.radians(turn)}
     return T.kit.fake_states(q=q)
 
 
@@ -55,16 +72,46 @@ def test_readouts_at_start():
 
 
 def test_readouts_locked():
-    o = states(0.0, 25.0)
+    o = states(0.0, 25.0, turn=90.0)
     assert T.door_gap(o) == pytest.approx(0.0, abs=1e-9)
     assert T.bolt_out(o) == pytest.approx(0.025, abs=1e-9)
     assert T.turn_deg(o) == pytest.approx(90.0, abs=1e-6)
+    assert T.readings(o) == {"gap_mm": 0.0, "turn_deg": 90.0, "bolt_mm": 25.0}
 
 
 def test_quarter_turn_throws_25_mm():
     assert math.degrees(crank_angle(0.0)) == pytest.approx(0.0, abs=1e-9)
     assert math.degrees(crank_angle(12.5)) == pytest.approx(45.0)
     assert math.degrees(crank_angle(25.0)) == pytest.approx(90.0)
+
+
+# -- the two angles a real trial reads ---------------------------------------------------------------------------------
+
+
+def test_turn_angles_are_where_the_bolt_reaches_its_thresholds():
+    # angle A (33 degrees) and angle B (84 degrees): turning toward locked, the bolt has just passed 8 mm and 23 mm.
+    # By the geometry that happens at 31.9 and 83.5 degrees; the simulator, turned slowly, gave 32.5 and 83.7.
+    assert PLAY == pytest.approx(0.5)
+    assert turned_to(8.0) == pytest.approx(31.9, abs=0.05) and turned_to(23.0) == pytest.approx(83.5, abs=0.05)
+    assert turned_to(8.0) <= T.TURN_ENTERED <= turned_to(8.0) + 1.5
+    assert turned_to(23.0) <= T.TURN_THROWN <= turned_to(23.0) + 1.5
+    assert 8.0 <= pushed_out(T.TURN_ENTERED) <= 8.5 and 23.0 <= pushed_out(T.TURN_THROWN) <= 23.5
+    assert T.ENTERED == pytest.approx(0.008) and T.THROWN == pytest.approx(0.023)
+    assert T.TURN_THROWN <= T.TURN_DEG - 5      # B is well short of the thumb-turn's stop, so it reads without doubt
+
+
+def test_angle_at_or_past_the_mark_means_the_bolt_is_out():
+    # with the pin's play taken up the worst way, the bolt is still 8 mm out at A or beyond and 23 mm out at B or beyond
+    for turn in np.arange(T.TURN_ENTERED, 90.01, 0.5):
+        assert pushed_out(turn) >= 8.0
+    for turn in np.arange(T.TURN_THROWN, 90.01, 0.5):
+        assert pushed_out(turn) >= 23.0
+
+
+def test_turn_stillness_matches_half_a_millimetre_of_bolt():
+    # 2 degrees of thumb-turn near locked moves the bolt a little under 0.5 mm
+    for turn in (84.0, 86.0, 88.0):
+        assert 0.4 <= pushed_out(turn + T.TURN_STILL) - pushed_out(turn) <= 0.5
 
 
 # -- scoring outcomes ------------------------------------------------------------------------------------------------
@@ -80,9 +127,32 @@ def test_door_pushed_shut_only():
 
 
 def test_bolt_into_strike():
-    assert run([states(1.0, 8.1)] * 50) == (False, 0.5)
+    assert run([states(1.0, 8.5)] * 50) == (False, 0.5)
     assert run([states(2.9, 12.0)] * 50) == (False, 0.5)
     assert run([states(1.0, 7.0)] * 50) == (False, 0.25)
+    just = T.TURN_ENTERED + 0.1                                   # a hair past angle A, the bolt where that puts it
+    assert run([states(1.0, turn=just, bolt_mm=pushed_out(just))] * 50) == (False, 0.5)
+    assert run([states(1.0, turn=T.TURN_ENTERED - 1, bolt_mm=pushed_out(T.TURN_ENTERED - 1))] * 50) == (False, 0.25)
+
+
+def test_score_reads_the_thumb_turn():
+    # the angle is what a real trial can see: short of angle A or B there is no credit for that step
+    assert run([states(1.0, 9.0, turn=T.TURN_ENTERED - 2)] * 50) == (False, 0.25)
+    assert run([states(1.0, 24.0, turn=T.TURN_THROWN - 2)] * 50) == (False, 0.5)
+    assert run([states(1.0, 24.0, turn=T.TURN_THROWN + 0.1)] * 50) == (True, 1.0)
+
+
+def test_thumb_turn_without_its_bolt_does_not_score():
+    # a thumb-turn turned with the bolt left behind (a broken simulated lock) earns nothing for the bolt
+    assert run([states(1.0, 2.5, turn=90.0)] * 50) == (False, 0.25)
+    assert run([states(1.0, 10.0, turn=90.0)] * 50) == (False, 0.5)
+
+
+def test_never_full_score_while_the_thumb_turn_moves():
+    seq = [states(0.5, 24.0, turn=85.0 + 3.0 * (k % 2)) for k in range(80)]   # the wing rocking 3 degrees per step
+    assert run(seq) == (False, 0.75)
+    seq = [states(0.5, 24.0, turn=85.0 + 1.0 * (k % 2)) for k in range(80)]   # 1 degree per step is still
+    assert run(seq) == (True, 1.0)
 
 
 def test_bolt_out_with_door_open_is_not_in_the_strike():
@@ -265,7 +335,8 @@ def test_text_matches_code():
                           "run_limit": 200, "setup": 4000, "scoring": 4000, "reset_notes": 1000,
                           "category": 100}.get(k, 4000) or k == "keywords"
     assert len(", ".join(d["keywords"])) <= 200
-    for s in ("2 mm", "3 mm", "8 mm", "23 mm", "1 s", "0.5 mm"):
+    for s in ("2 mm", "3 mm", "8 mm", "23 mm", "1 s", "0.5 mm", "2 degrees",
+              f"{T.TURN_ENTERED:.0f} degrees", f"{T.TURN_THROWN:.0f} degrees"):
         assert s in d["scoring"], s
     assert all(not any(isinstance(v, str) and a in v for a in ("/Users", "/home", "ubuntu")) for v in d.values())
     assert list(itertools.chain()) == []

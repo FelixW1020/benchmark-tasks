@@ -222,11 +222,22 @@ def turn_deg(objects) -> float:
 
 
 # -- scoring ---------------------------------------------------------------------------------------------------------
+# Once the bolt is in the strike it is out of sight, so a real trial cannot put a ruler on it. The score therefore reads
+# two things that stay in view with the door locked: the gap at the latch edge and the thumb-turn's angle. The two
+# angles below are where this lock's bolt reaches its two thresholds. Turning toward locked, the crank's pin pushes the
+# leading wall of the bolt's slot, so the bolt trails the pin's centre by half the slot's play (0.5 mm):
+#     bolt = 12.5 * (1 - cos(turn) + sin(turn)) - 0.5 mm,  which is 8 mm at 31.9 degrees and 23 mm at 83.5 degrees.
+# Turned slowly in the simulator (python demo.py ... --turn-s 30), the bolt passes 8 mm at 32.5 degrees and 23 mm at
+# 83.7 degrees. A and B are those two readings rounded up to a whole degree. A real lock gets its own two angles the
+# same way, by measuring the bolt with the door open (see the README).
 FLUSH = 0.002        # the door held within 2 mm of its stop
 SEATED = 0.003       # within 3 mm: the bolt lines up with the strike (2 mm clearance, plus the bolt's own play)
 ENTERED = 0.008      # bolt 8 mm out: 5 mm past the 3 mm gap, so in the strike
 THROWN = 0.023       # bolt at least 23 of its 25 mm out
-STILL = 0.0005       # neither the bolt nor the door's edge moved more than 0.5 mm since the last control step
+TURN_ENTERED = 33.0  # deg from upright: angle A, the bolt 8 mm out
+TURN_THROWN = 84.0   # deg from upright: angle B, the bolt 23 mm out
+STILL = 0.0005       # the door's edge has not moved more than 0.5 mm since the last control step
+TURN_STILL = 2.0     # deg: nor the thumb-turn more than 2 degrees (about 0.5 mm of bolt)
 HOLD = 20            # control steps (1 s at 20 Hz)
 _STATE: dict = {}
 
@@ -249,13 +260,15 @@ mk.new_episode = _new_episode   # the kit calls new_episode() at every reset
 
 
 def _update(objects) -> tuple[float, bool]:
-    g, b = door_gap(objects), bolt_out(objects)
-    last, _STATE["last"] = _STATE["last"], (g, b)
-    still = last is not None and abs(g - last[0]) < STILL and abs(b - last[1]) < STILL
+    g, b, t = door_gap(objects), bolt_out(objects), turn_deg(objects)
+    last, _STATE["last"] = _STATE["last"], (g, t)
+    still = last is not None and abs(g - last[0]) < STILL and abs(t - last[1]) < TURN_STILL
     seated = g <= SEATED
     _STATE["flush"] |= bool(g <= FLUSH)
-    _STATE["entered"] |= bool(seated and b >= ENTERED)
-    locked = bool(seated and b >= THROWN)
+    # The thumb-turn's angle is what a real trial reads. The simulator can also see the bolt, and requires it to be
+    # where that angle puts it, so a thumb-turn that had come adrift of its bolt could not score.
+    _STATE["entered"] |= bool(seated and t >= TURN_ENTERED and b >= ENTERED)
+    locked = bool(seated and t >= TURN_THROWN and b >= THROWN)
     _STATE["thrown"] |= locked
     _STATE["held"] = _STATE["held"] + 1 if (locked and still) else 0
     if _STATE["held"] >= HOLD:   # success: locked and still for 20 control steps (1 s) in a row
@@ -268,14 +281,23 @@ def _update(objects) -> tuple[float, bool]:
 
 
 def success(objects) -> bool:
-    """Locked: the bolt at least 23 mm into the strike with the door within 3 mm of its stop, still, for 1 s."""
+    """Locked: the thumb-turn at 84 degrees or more (bolt at least 23 mm into the strike) with the door within 3 mm of
+    its stop, still, for 1 s."""
     out = _update(objects)
     _STATE["_this_step"] = (objects, out)   # the runtime calls success() then score() on each step's states:
     return out[1]                            # score() reuses this, so the step counts once
 
 
 def score(objects) -> float:
-    """1.0 locked and still for 1 s; 0.75 bolt fully thrown into the strike at some point; 0.5 bolt into the strike
-    (8 mm out with the door within 3 mm of its stop) at some point; 0.25 door held within 2 mm of its stop; else 0."""
+    """1.0 locked and still for 1 s; 0.75 thumb-turn at 84 degrees or more (bolt fully thrown) with the door within
+    3 mm of its stop at some point; 0.5 thumb-turn at 33 degrees or more (bolt 8 mm out, in the strike) with the door
+    within 3 mm of its stop at some point; 0.25 door held within 2 mm of its stop at some point; else 0."""
     pending = _STATE.pop("_this_step", None)
     return (pending[1] if pending and pending[0] is objects else _update(objects))[0]
+
+
+def readings(objects) -> dict:
+    """What a trial is scored on, for logs: the gap at the latch edge (mm), the thumb-turn's angle (deg), and the
+    bolt's travel (mm), which only the simulator can see once the door is locked."""
+    return {"gap_mm": round(1000 * door_gap(objects), 2), "turn_deg": round(turn_deg(objects), 1),
+            "bolt_mm": round(1000 * bolt_out(objects), 2)}

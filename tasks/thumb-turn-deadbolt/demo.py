@@ -1,11 +1,13 @@
 """Scripted full-score demo for the thumb-turn deadbolt task, run in the yam_arena embodiment.
 
-    python demo.py task.py demo_out [--max-steps 1200] [--no-record]
+    python demo.py task.py demo_out [--max-steps 1200] [--no-record] [--turn-s 3]
 
 The left arm, its fingers closed and pointing at the door, presses the door shut against its weatherstrip about
 halfway across and keeps pressing. The right arm comes in level, its fingers open either side of the thumb-turn's
 upright wing, pinches it and turns the hand a quarter turn toward the latch edge, which throws the bolt into the strike.
-Writes one MP4 per camera, setup.png (the first top-camera frame) and result.json to the output folder.
+Writes one MP4 per camera, setup.png (the first top-camera frame) and result.json to the output folder. With
+DEMO_DEBUG=1 it also writes trace.csv: the gap, the thumb-turn's angle, the bolt's travel and the score after every
+control step.
 """
 
 from __future__ import annotations
@@ -116,8 +118,8 @@ R_OPEN = 46 / 94        # the right fingers open 46 mm round the 12 mm wing
 ROLL = math.radians(100)    # the hand is turned 100 degrees: the thumb-turn stops at 90 and the compliant wrist lags
 
 
-def script(task, ctx):
-    """The demo as a generator: one yield per control step."""
+def script(task, ctx, turn_s: float = 3.0):
+    """The demo as a generator: one yield per control step. ``turn_s`` is how long the quarter turn takes."""
     L, R = ctx.left, ctx.right
     T = task
     rot0 = level_grip(0.0)
@@ -139,7 +141,7 @@ def script(task, ctx):
 
     # 3. Turn the hand a quarter turn about the thumb-turn's axis, its top toward the latch edge: the cam throws the
     #    bolt into the strike. Hold it there.
-    yield from R.move(pinch, level_grip(ROLL), 3.0)
+    yield from R.move(pinch, level_grip(ROLL), turn_s)
     yield from wait(3.0)
 
 
@@ -189,7 +191,7 @@ def _write_mp4(frames, path: Path) -> None:
 
 
 def run(task_path: str, out_dir: str, max_steps: int = 1200, record: bool = True, cam_width: int = 320,
-        cam_height: int = 176, hold_s: float = 4.0) -> dict:
+        cam_height: int = 176, hold_s: float = 4.0, turn_s: float = 3.0) -> dict:
     from inspect_robots import Scene
     from yam_arena.inspect_embodiment import yam_arena_embodiment
 
@@ -202,7 +204,7 @@ def run(task_path: str, out_dir: str, max_steps: int = 1200, record: bool = True
     obs = emb.reset(Scene(id="demo", instruction="demo"))
     task = emb.task.module
     ctx = Ctx(emb)
-    gen = script(task, ctx)
+    gen = script(task, ctx, turn_s)
     frames: dict[str, list] = {}
 
     def snap(o):
@@ -212,6 +214,7 @@ def run(task_path: str, out_dir: str, max_steps: int = 1200, record: bool = True
 
     snap(obs)
     steps, ended, success, info = 0, None, False, {}
+    trace = []   # DEMO_DEBUG only: (step, gap mm, thumb-turn deg, bolt mm, score) after every control step
     while steps < max_steps:
         try:
             next(gen)
@@ -221,6 +224,9 @@ def run(task_path: str, out_dir: str, max_steps: int = 1200, record: bool = True
         steps += 1
         info = res.info
         snap(res.observation)
+        if os.environ.get("DEMO_DEBUG"):
+            r = task.readings(ctx.states())
+            trace.append((steps, r["gap_mm"], r["turn_deg"], r["bolt_mm"], info.get("score")))
         if steps % 100 == 0 or (os.environ.get("DEMO_DEBUG") and steps % 20 == 0):
             msg = f"step {steps} score {info.get('score')}"
             if os.environ.get("DEMO_DEBUG"):
@@ -245,7 +251,11 @@ def run(task_path: str, out_dir: str, max_steps: int = 1200, record: bool = True
             break
     score = 1.0 if success else float(info.get("score", 0.0) or 0.0)
     result = {"task_score": score, "success": success, "steps": steps,
+              "final": task.readings(ctx.states()),   # read once, after the last step: gap, thumb-turn angle, bolt
               "worst_ik_mm": {"left": round(ctx.left.worst_mm, 2), "right": round(ctx.right.worst_mm, 2)}}
+    if trace:
+        (out / "trace.csv").write_text("step,gap_mm,turn_deg,bolt_mm,score\n" + "".join(
+            f"{k},{g},{t},{bo},{sc}\n" for k, g, t, bo, sc in trace))
     if record:
         import imageio
 
@@ -265,5 +275,8 @@ if __name__ == "__main__":
     ap.add_argument("out")
     ap.add_argument("--max-steps", type=int, default=1200)
     ap.add_argument("--no-record", action="store_true")
+    ap.add_argument("--turn-s", type=float, default=3.0,
+                    help="seconds for the quarter turn (3 in the demo; 30 with DEMO_DEBUG=1 for a slow pass that "
+                         "shows the bolt's travel against the thumb-turn's angle in trace.csv)")
     a = ap.parse_args()
-    run(a.task, a.out, a.max_steps, record=not a.no_record)
+    run(a.task, a.out, a.max_steps, record=not a.no_record, turn_s=a.turn_s)
