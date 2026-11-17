@@ -107,11 +107,11 @@ What this adds up to:
 
 ### Measuring the rule on a real spinner
 
-Twenty minutes with the spinner, 150 g of torn lettuce, a kitchen scale that reads 1 g or better, a metronome and a
-phone's slow-motion video gives both numbers:
+Twenty minutes with the spinner, one batch of the task's lettuce (150 g of romaine pieces, see "The lettuce"), a
+scale that reads 0.1 g, a metronome and a phone's slow-motion video gives both numbers:
 
-1. Weigh the lettuce dry (D). Dunk it for 10 s, lift it out in the basket, let it drip for 10 s and weigh it wet
-   (W). It carries W - D of water.
+1. Prepare the lettuce as for a trial: pat it dry and weigh it (D), dunk it for 10 s, let it drip for 10 s in the
+   basket and weigh it wet (W). It carries W - D of water.
 2. Crank at a steady pace (metronome) for 2 s, stop, let the basket stop, pour the water from the bowl into a cup on
    the scale and note the total. Repeat for running totals at 5, 10, 20 and 40 s. Film a few seconds in slow motion
    with a mark on the basket's rim in view, and count the basket's turns a second.
@@ -229,13 +229,79 @@ python demo.py task.py out_dir --mode still     # control: the arms do not move
 The demo uses only the layout constants in `task.py`, the spinner's geometry in `spinnerkit.py` and the robot's own
 measured hand positions and finger openings (proprioception). It never reads the spinner's state to act.
 
+## The lettuce: variety, storage, temperatures, preparation and reuse
+
+Lettuce is perishable and varies from head to head, so real trials use one specified material, prepared one way and
+replaced by rule. (The simulator's basket carries the same 150 g; variety and temperature are not modelled there.)
+
+**Material**
+
+- **Variety:** romaine (cos) lettuce hearts, bought whole and unwashed in their bag. Not bagged salad, not pre-cut
+  leaves, not another variety. Romaine is sturdy enough to be wetted and patted dry several times, and it is one of
+  the lettuces with published surface-moisture figures (see "The drying rule").
+- **Cut:** take off the two outermost leaves of each heart and the bottom 3 cm (the butt), then cut the rest across
+  the leaves into pieces 4 cm long (3.5 to 4.5 cm; a ruler and a knife). Mix the pieces.
+- **Batch:** 150 g of pieces (148 to 152 g), weighed patted dry as in step 1 below. One batch serves a session.
+
+**Storage**
+
+- Whole hearts stay in their bag in a refrigerator at 1 to 5 C and are used within 5 days of purchase and before
+  the date on the bag. 5 C (41 F) or colder is the cold-holding temperature the FDA Food Code sets for cut leafy
+  greens ([FDA guidance](https://www.fda.gov/food/retail-food-industryregulatory-assistance-training/program-information-manual-retail-food-protection-recommendations-temperature-control-cut-leafy)).
+- Pieces are cut on the day of the trials and kept in a closed container in the refrigerator until the session.
+- The lettuce is test material. It is not eaten afterwards.
+
+**Temperatures at the trial**
+
+- Room: 18 to 26 C.
+- Dunking water: tap water at 15 to 25 C, checked with a kitchen thermometer, at least 2 L in a bowl deep enough to
+  cover the basket's contents, fresh each session.
+- Lettuce: a batch comes out of the refrigerator at the start of its session and is given one conditioning cycle
+  before its first trial: steps 2 and 3 below, then step 1. That brings it to the water's temperature, and makes the
+  first trial start from the same state as every later one (wetted once and patted dry).
+
+**Before each trial**
+
+1. **Pat dry and weigh (D).** Spread the pieces in one layer on two sheets of paper towel, lay two more on top and
+   press flat with the palms for 5 s. Turn the pieces over and repeat with fresh towel. Weigh them. Repeat until two
+   weighings in a row differ by 0.3 g or less; the last is D.
+2. **Wet.** Put the pieces in the spinner's basket, lower it into the water until all of them are under, and hold it
+   there for 10 s, stirring once by hand.
+3. **Drip.** Lift the basket straight out and hold it still above the bowl for 10 s. Do not shake it.
+4. **Weigh wet (W).** Tip the pieces into a tared dry bowl on the scale and read the weight. Tip them back into the
+   basket and weigh the emptied bowl: what stayed behind in it is taken off the reading, so that W is the lettuce
+   that goes into the spinner. The water carried in, W - D, must be at least 12.0 g (8% of the lettuce's
+   weight). If it is less, repeat steps 2 to 4 once; if it is still less, replace the batch.
+5. **Load.** Wipe the spinner's bowl dry. Spread the pieces evenly round the basket's wall, put the basket in the
+   bowl, the lid on its lugs, the crank pointing away from the robot, the bowl on its tape mark. Start the trial
+   within 2 minutes of weighing.
+
+**After each trial:** lift the basket out, tip the pieces into the tared dry bowl and weigh them (E). Pour the
+water out of the spinner's bowl. Write down D, W, E, the water's temperature and the room's.
+
+**Reuse, and when to replace the batch**
+
+- The same batch is used again after step 1, for up to 8 trials in one session and no more than 90 minutes out of
+  the refrigerator.
+- Replace it with a fresh batch if its patted-dry weight D has moved more than 3 g (2%) from its first value, if
+  more than about a tenth of the pieces have gone limp or translucent or have broken smaller than 2 cm, or when the
+  session ends. A batch is not kept for another day.
+- These limits are a specification that has not been tried on a batch. If D drifts sooner, replace sooner: the
+  2% rule decides.
+
+**How precise this is.** With a scale that reads 0.1 g and at least 12 g of water carried in, the share spun out is
+good to 3 percentage points at worst, against score thresholds 17 points apart. Washed, drained romaine has been
+measured at 8.5% surface moisture in one published example and 18.6% (chopped) in another (US patent 8,234,795,
+cited above): 13 to 28 g on 150 g, so the 12 g minimum should be met at the first dunk.
+
 ## Scoring
 
-Tools: a kitchen scale that reads 1 g or better (0.1 g is better); the trial video; a ruler; a tape mark round the
-bowl's base on the worktop.
+Tools: a scale that reads 0.1 g (500 g capacity or more); a kitchen thermometer; the trial video; a ruler; a tape
+mark round the bowl's base on the worktop.
 
-- **Water carried in.** Before the trial, weigh the lettuce dry (D, about 150 g). Dunk it in water for 10 s, lift it
-  out in the basket, let it drip for 10 s and weigh it wet (W). It carries W - D of water into the spinner.
+- **Water carried in.** The lettuce is the specified romaine, prepared as in "The lettuce" above: patted dry and
+  weighed (D, 150 g), dunked for 10 s, dripped for 10 s in the basket and weighed wet (W). It carries W - D of
+  water into the spinner, which must be at least 12.0 g.
 - **Share spun out.** After the trial, weigh the lettuce again (E). The share of its water that has been spun out is
   (W - E) / (W - D). The water lying in the bowl, poured off and weighed, checks it. In the simulator there is no
   water: the share is worked out every control step from the basket's speed by the drying rule above, and never goes
@@ -313,7 +379,8 @@ left).
   - The crank: a grey arm 6.6 cm long on top of the housing, turning about the spinner's axis, 13.5 cm above the
     table at its top. At its end, 5.5 cm from the axis, a green knob 2.2 cm across and 3.4 cm tall that turns freely
     on the arm. It starts pointing forward (+x). Crank and knob weigh 0.03 kg.
-  - The basket: white, 17.6 cm across, inside the bowl, with 150 g of washed lettuce (0.27 kg in all) and a red
+  - The basket: white, 17.6 cm across, inside the bowl, with 150 g of washed romaine lettuce in 4 cm pieces (0.27 kg
+    in all; for a real trial, the material and its preparation are in "The lettuce" above) and a red
     stripe on its rim.
   - The gearing: with the lid on, one clockwise turn of the crank turns the basket 5 times through a one-way clutch.
     Turned backward, or with the lid off the bowl, the crank does not drive the basket.
@@ -347,8 +414,11 @@ left).
 
 - **The spinner:** any 2-quart hand-crank salad spinner with a crank on a lift-off lid and a handle or rim the
   gripper can hold (or a small handle added to the bowl). A tape mark round the bowl's base.
-- **Each trial:** about 150 g of torn lettuce, weighed dry, dunked for 10 s, dripped for 10 s and weighed wet (see
-  Scoring), in the basket; the bowl wiped dry; lid on, crank pointing away from the robot.
+- **The lettuce:** romaine hearts kept at 1 to 5 C, cut into 4 cm pieces on the day, in 150 g batches; a bowl of
+  tap water at 15 to 25 C; paper towels; a scale reading 0.1 g; a kitchen thermometer. The whole procedure, with
+  the rule for reusing and replacing a batch, is in "The lettuce".
+- **Each trial:** the batch patted dry and weighed, dunked for 10 s, dripped for 10 s and weighed wet (at least 12 g
+  of water carried in), in the basket; the bowl wiped dry; lid on, crank pointing away from the robot.
 - **Scoring:** weigh the lettuce after the trial for the share of its water spun out; check on the trial video that
   the lid stayed on the rim; check the bowl against its tape mark and the grippers' distance from the knob at the
   end. No speed has to be measured to score a trial. To compare a real spinner with the simulator's drying rule, or
