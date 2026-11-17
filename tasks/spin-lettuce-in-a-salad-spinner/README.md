@@ -74,30 +74,36 @@ So full score takes the basket well over 5 turns a second for about 6 seconds, a
 turns a second it reaches two-thirds in 5.2 s; at 5.5 turns a second in 6.5 s; at 5 turns a second it never quite
 does.
 
-**What is and is not known.** Three published figures bear on this, and none of them is a drying curve for a
-household spinner:
+**What has been measured, and how the rule compares.** We found four published measurements that bear on this.
+None is a drying curve for a hand-crank household spinner, and one of them cuts against the rule:
 
-- A household spinner worked by hand does spin at several hundred rpm. A pump-driven household salad spinner, pumped
-  steadily by nine people, averaged 602 rpm at the basket (400 to 730), measured with a laser tachometer, which the
-  authors work out as 31 g where their samples sat
-  ([Brown et al., Am J Trop Med Hyg 2011;85:327-332](https://pmc.ncbi.nlm.nih.gov/articles/PMC3144833)). The
-  simulated crank spinner, at the speed this robot's arm can keep up, runs slower than that (372 rpm, 13.6 g).
-- In fresh-cut processing, a draining stage leaves lettuce and other vegetables with 4 to 10% residual water, and a
-  dryer after it brings that to about 2%
-  ([US patent 6,055,741](https://patents.google.com/patent/US6055741A/en)): between half and four-fifths of the
-  surface water taken off. The task's "dry" (two-thirds) sits inside that range.
-- For washed spinach in a spin dryer, "the higher the centrifugal speed, the less water excess was present at a
-  given time, centrifugal speed having a greater influence on water excess than operation time" (speeds 0 to
-  1080 rpm, 1 to 9 minutes;
-  [Pirovani et al., J Food Quality 2003;26:231-242](https://onlinelibrary.wiley.com/doi/abs/10.1111/j.1745-4557.2003.tb00241.x)).
-  That is the shape the rule has: a limit set by the speed, approached with time. We could not read that paper's
-  data, so the rule is not fitted to it.
+| Measurement | What was measured | What the rule gives |
+|---|---|---|
+| A hand-pumped household spinner, pumped steadily by nine people ([Brown et al., Am J Trop Med Hyg 2011;85:327-332](https://pmc.ncbi.nlm.nih.gov/articles/PMC3144833)) | Basket speed 602 rpm on average (400 to 730), by laser tachometer; 31 g where their samples sat | Speed only: a hand-worked household spinner runs at several hundred rpm. The simulated one, at the pace this robot's arm keeps up, runs slower (374 rpm, 13.8 g) |
+| Another hand-pumped household spinner, with washed mixed greens, in a product test ([Food Network, "Best Salad Spinners", updated June 2026](https://www.foodnetwork.com/how-to/packages/shopping/product-reviews/best-salad-spinner)) | "It removed at least 85 percent of the water from our lettuce in less than 25 seconds." Its speed was not measured | 85 to 86% if it ran at the 602 rpm above in a basket of 11 to 12 cm radius (44 to 48 g), reached within a few seconds. Consistent, but the speed is borrowed from a different spinner |
+| An industrial drum dryer at 500 to 700 rpm, full baskets, 2 to 15 minutes ([US patent 8,234,795](https://patents.google.com/patent/US8234795B2/en), examples 1 and 2; moisture by air drying and weighing) | Surface moisture of romaine 8.5% before and 3.2% after (62% removed); chopped romaine, iceberg and two blends, 51 to 62% removed; spring mix 79%. In the patent's divided basket, which keeps the layer of leaves thin: romaine 81%, spring mix 89% | More than was measured in the full baskets: a drum that size at that speed presses harder than a household basket, for which the rule already gives about 85% |
+| A draining stage and then a dryer on a fresh-cut line ([US patent 6,055,741](https://patents.google.com/patent/US6055741A/en)) | Lettuce and other vegetables at 4 to 10% residual water after draining, about 2% after the dryer: between half and four-fifths taken off | No speed given. The task's "dry" (two-thirds) sits inside that range |
 
-We found no published measurement of water removed against speed and time in a household spinner, and we have not
-made one. The exponent (0.5) is the capillary argument above, which ignores water trapped between overlapping
-leaves; the 2 s is an estimate. A real spinner may dry more slowly, or less completely, than the rule says. That
-does not affect a real trial, which is scored by weighing. It does mean the simulator's score is a model of drying,
-not a measurement of it.
+A fifth source gives the shape but not numbers we could read: for washed spinach in a spin dryer, "the higher the
+centrifugal speed, the less water excess was present at a given time, centrifugal speed having a greater influence
+on water excess than operation time" (0 to 1080 rpm, 1 to 9 minutes;
+[Pirovani et al., J Food Quality 2003;26:231-242](https://onlinelibrary.wiley.com/doi/abs/10.1111/j.1745-4557.2003.tb00241.x)).
+That is the shape the rule has: a limit set by the speed, approached with time.
+
+What this adds up to:
+
+- The rule agrees with the one household measurement, on the assumption about that spinner's speed stated in the
+  table.
+- It overstates drying in a packed basket. In the industrial full baskets about 60% came off, at a push well above
+  anything in this task; the runs of 5 to 15 minutes in the patent's second example took off no more than the
+  2-minute run in its first. The same dryer with the leaves kept in a thin layer took off 81 to 89%. Water held between packed leaves does not leave the way the
+  capillary argument says, which considers a leaf's open surface.
+- So the rule describes leaves in a thin layer against the basket's wall. The task's 150 g in a 2-quart basket is
+  somewhere between that and a packed basket, and nothing published says where. We have not measured it. The
+  exponent (0.5) and the 2 s are therefore an argument and an estimate, and the simulator's score is a model of
+  drying, not a measurement of it.
+- A real trial does not depend on any of this: it is scored by weighing the lettuce. The procedure below measures
+  the rule's two numbers on a real spinner, and they can be replaced in `task.py` without touching the scoring.
 
 ### Measuring the rule on a real spinner
 
