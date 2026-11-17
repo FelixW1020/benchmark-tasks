@@ -1,4 +1,4 @@
-"""Offline checks of the gearing, the lid's fit, the scoring rule and the spinner's geometry (no simulator):
+"""Offline checks of the gearing, the lid's fit, the scoring rule, the drying rule and the spinner's geometry (no simulator):
 python -m pytest test_scoring.py"""
 
 from __future__ import annotations
@@ -113,42 +113,82 @@ def test_the_rim_leaves_a_notch_at_each_lug():
 
 # -- scoring --------------------------------------------------------------------------------------------------------------
 
-def test_tiers():
+def test_tiers_are_by_the_share_of_the_water_spun_out():
     assert T.score_from(0.0, False, False, True) == 0.0
-    assert T.score_from(0.95, False, False, True) == 0.0                     # touched drying speed, did not stay there
-    assert T.score_from(1.0, False, False, True) == 0.25
-    assert T.score_from(2.45, False, False, True) == 0.25
-    assert T.score_from(2.5, False, False, True) == 0.5
-    assert T.score_from(4.95, False, False, True) == 0.5                     # not for long enough
-    assert T.score_from(5.0, False, False, True) == 1.0
-    assert T.score_from(9.0, False, False, False) == 0.5                     # still holding the knob: not let go
-
-
-def test_slow_cranking_however_long_earns_nothing():
-    # the first version's demo: six turns at a quarter of a turn a second. Its basket never passed 2.6 turns a second,
-    # so it spent no time at drying speed, and no number of turns changes that.
-    assert T.score_from(0.0, False, False, True) == 0.0
+    assert T.score_from(0.32, False, False, True) == 0.0                     # under a third: still wet
+    assert T.score_from(1 / 3, False, False, True) == 0.25
+    assert T.score_from(0.49, False, False, True) == 0.25
+    assert T.score_from(0.5, False, False, True) == 0.5
+    assert T.score_from(0.66, False, False, True) == 0.5                     # not quite two-thirds
+    assert T.score_from(2 / 3, False, False, True) == 1.0
+    assert T.score_from(0.72, False, False, False) == 0.5                    # still holding the knob: not let go
 
 
 def test_knocking_the_spinner_about_or_losing_the_lid_zeroes_the_trial():
-    assert T.score_from(9.0, True, False, True) == 0.0
-    assert T.score_from(9.0, False, True, True) == 0.0
+    assert T.score_from(0.9, True, False, True) == 0.0
+    assert T.score_from(0.9, False, True, True) == 0.0
 
 
 def test_score_reads_the_trial_record():
     T._clear()
-    T._STATE.update(dry_s=5.0, let_go=True)
+    assert T.score({}) == 0.0                                                 # nothing done: all the water still on
+    T._STATE.update(water=0.30, let_go=True)
     assert T.score({}) == 1.0 and T.success({})
     T._STATE.update(lid_off=True)
     assert T.score({}) == 0.0
     T._clear()
 
 
-def test_the_drying_speed_is_what_the_task_says():
-    assert T.DRY_RPS * 60 == pytest.approx(300.0)                            # rpm
-    assert T.wall_g(T.DRY_RPS) == pytest.approx(8.9, abs=0.1)                # times gravity at the basket's wall
-    assert 0.0 < T.SOME_S < T.HALF_S < T.DRY_S
-    assert T.DRY_RPS / K.RATIO == pytest.approx(1.0)                         # one crank turn a second
+# -- the drying rule ------------------------------------------------------------------------------------------------------
+
+def spin(rps: float, seconds: float, water: float = 1.0, dt: float = 0.05) -> float:
+    for _ in range(round(seconds / dt)):
+        water = T.drain(water, rps, dt)
+    return water
+
+
+def test_the_rule_is_in_terms_of_the_push_at_the_wall_not_of_rpm():
+    # the same rpm presses twice as hard in a basket of twice the radius ...
+    assert T.wall_g(5.0, 0.176) == pytest.approx(2 * T.wall_g(5.0, 0.088))
+    # ... and this basket at 300 rpm presses at 8.9 times gravity
+    assert T.wall_g(5.0) == pytest.approx(8.9, abs=0.1)
+    assert T.holds(0.5) == 1.0 and T.holds(1.0) == 1.0                       # nothing leaves at 1 g: it has already dripped
+    assert T.holds(4.0) == pytest.approx(0.5) and T.holds(9.0) == pytest.approx(1 / 3)
+    assert T.holds(100.0) == pytest.approx(0.1)
+
+
+def test_water_only_ever_leaves_and_faster_spinning_takes_more():
+    assert spin(0.0, 60.0) == 1.0                                             # a still basket dries nothing
+    left = [spin(rps, 60.0) for rps in (1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0)]
+    assert all(a >= b for a, b in zip(left, left[1:]))
+    w = spin(6.0, 3.0)
+    assert spin(2.0, 10.0, water=w) == w                                      # slowing down puts none back
+
+
+def test_slow_cranking_however_long_earns_nothing():
+    # a basket kept at 2.4 turns a second (144 rpm: 2.0 times gravity at its wall) never spins out a third of the
+    # water, however long it is cranked
+    assert T.wall_g(2.4) == pytest.approx(2.0, abs=0.05)
+    assert 1.0 - spin(2.4, 600.0) < T.SOME
+    assert T.score_from(1.0 - spin(2.4, 600.0), False, False, True) == 0.0
+
+
+def test_what_each_tier_takes():
+    some, half, dry = (T.turns_a_second_for(x) for x in (T.SOME, T.HALF, T.DRY))
+    assert some == pytest.approx(2.5, abs=0.1)                                # 151 rpm kept up for long
+    assert half == pytest.approx(3.4, abs=0.1)                                # 202 rpm
+    assert dry == pytest.approx(5.0, abs=0.1)                                 # 302 rpm, and only after a long time
+    assert some / K.RATIO == pytest.approx(0.5, abs=0.03)                     # half a crank turn a second, for a third
+    # at exactly the speed whose limit is two-thirds, 5 seconds is not enough; well over it, 6 seconds is
+    assert 1.0 - spin(5.0, 5.0) < T.DRY
+    assert 1.0 - spin(6.0, 6.0) >= T.DRY
+    assert 1.0 - spin(6.0, 2.0) < T.DRY                                       # a short burst is not
+
+
+def test_the_instruction_says_what_full_marks_take():
+    assert "two-thirds" in T.INSTRUCTION and "5 turns a second" in T.INSTRUCTION and "6 seconds" in T.INSTRUCTION
+    assert 0.0 < T.SOME < T.HALF < T.DRY < 1.0
+    assert T.DRAIN_S > 0 and T.HOLD_EXP == pytest.approx(0.5)
 
 
 # -- geometry -------------------------------------------------------------------------------------------------------------

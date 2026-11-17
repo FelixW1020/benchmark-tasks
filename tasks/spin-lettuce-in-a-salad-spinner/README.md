@@ -1,18 +1,21 @@
-# Spin lettuce dry in a hand-crank salad spinner: hold the bowl, keep the loose lid on, basket at 300 rpm for 5 seconds
+# Spin lettuce dry in a hand-crank salad spinner: hold the bowl, keep the loose lid on, spin out two-thirds of its water
 
 A 2-quart hand-crank salad spinner stands on the worktop with washed lettuce in its basket and its lid on. The robot
-has to spin the lettuce dry: crank fast enough to keep the basket at 5 turns a second (300 rpm) or more for 5 seconds
-with the lid still on the bowl, then let go.
+has to spin the lettuce dry: crank fast enough, for long enough, that at least two-thirds of the water the lettuce
+carries has been spun out of it, with the lid still on the bowl, and then let go.
 
-**Instruction:** "Spin the washed lettuce dry in the salad spinner: turn its crank clockwise fast enough to keep the
-basket spinning at 5 turns a second or more for 5 seconds, keep the lid on, then let go of the crank."
+**Instruction:** "Spin the washed lettuce dry in the salad spinner: crank it clockwise fast enough and long enough to
+spin out at least two-thirds of the water the lettuce carries (the basket well over 5 turns a second for about 6
+seconds), keep the lid on, then let go of the crank."
 
 A hand-crank salad spinner is in most home kitchens and in many restaurant prep kitchens. Its crank turns the basket
 through gears (here 1:5) and a one-way clutch, so the basket spins up while the crank is turned and coasts on when it
 stops. Drying the leaves takes three things at once:
 
-1. **Cranking fast, round and round.** Water leaves the leaves only when the basket spins fast. It takes just over
-   one crank turn a second to hold 300 rpm at the basket; a slow crank turns the basket without drying anything. The hand holds a small
+1. **Cranking fast, round and round.** Water leaves the leaves only when the basket spins fast: how much comes off
+   is set by how hard the basket's wall presses outward, which goes with the square of its speed. It takes more than
+   one crank turn a second, kept up for several seconds, to spin out two-thirds of it; a slow crank turns the basket
+   and leaves the lettuce wet. The hand holds a small
    knob that has to travel round a 5.5 cm circle more than once a second, a dozen times over, without losing it. The
    knob is fixed to the crank, so the hand cannot choose its own path: it has to go where the crank lets it.
 2. **Holding the bowl.** The gears push back on the crank, and that push goes into the lid and the bowl. A light
@@ -23,21 +26,97 @@ stops. Drying the leaves takes three things at once:
 
 ## What changed in this revision
 
-The first version counted crank turns with the lid fixed to the bowl. The review pointed out that a real lid can be
-cranked off, and that a crank turned too slowly does not dry lettuce, yet both still earned credit. Now:
+The second review said that the 300 rpm for 5 seconds threshold "is extrapolated from larger machines without
+showing that it dries lettuce in this spinner", and asked for a calibration on measured drying of washed lettuce "or
+another measurable drying condition". This revision takes the second course:
 
-- **The lid is loose.** It is its own body, lying on the bowl's rim with its own rim round the bowl's. The gears mesh
-  only while it is on the bowl. If it is ever lifted 5 mm or tipped 8 degrees off the rim, the trial scores 0.
-- **Credit is for time at drying speed, not for turns.** Every score above 0 is for time the basket spent at 5 turns
-  a second (300 rpm) or more with the lid on: 5 seconds for full score, and no less than 1 second for any credit. The
-  first version's own demo (six turns at a quarter of a turn a second, basket at 155 rpm at most) now scores 0.
-- **Where 300 rpm and 5 seconds come from.** Machines sold to dry salad give the scale: a commercial electric salad
-  spinner (Sammic ES-100) has two settings, 350 and 900 rpm, and an industrial leaf dryer (KRONEN K850) spins at up
-  to 660 rpm for 5 to 30 seconds (manufacturers' specifications). The task's floor is set just under the slower
-  machine's low setting, for the shortest of those cycle times. At this basket's wall, 8.8 cm from the axis, 300 rpm
-  presses water outward at 8.9 times gravity. With 1:5 gears that takes just over one full crank turn a second. We found no
-  published measurement of a hand-cranked spinner's speed, so the threshold is set from those machines, and a real
-  trial measures the basket's speed directly (see Scoring).
+- **What is scored is water, not speed.** The score is by the share of the water the washed lettuce carried in that
+  has been spun out of it: two-thirds for full score, half for 0.5, a third for 0.25. In a real trial that share is
+  weighed on a kitchen scale (see Scoring). No speed or time threshold is used to score a real trial.
+- **The rpm figures borrowed from larger machines are gone**, from the scoring, the instruction's reasoning and the
+  context. They compared speeds across baskets of different sizes, which is not a like-for-like comparison: what
+  takes water off a leaf is the outward push at the basket's wall, which goes with the radius as well as the speed.
+- **In the simulator, which has no water, the share is worked out from that push**, in multiples of gravity, by a
+  stated rule (next section). The rule has two numbers. One is a physical argument, the other an estimate. Neither
+  has been measured on a spinner, and the section says so and gives the kitchen procedure for measuring them.
+- **Slow cranking still earns nothing:** a basket kept at 144 rpm (2.0 times gravity at its wall) or slower never
+  spins out a third of the water, however long it is cranked. The slow-cranking control run (149 rpm at its fastest)
+  spun out 24% and scores 0.
+
+Earlier changes, kept: the lid is a loose part that the crank can lift off (a trial in which it comes off scores 0),
+and turning the crank is not credited for its own sake.
+
+## The drying rule
+
+**Why the push and not the rpm.** Water is flung off a leaf by the outward push on it, `(2 pi f)^2 r`: the square of
+the basket's turning rate f times the radius r. At 300 rpm that is 8.9 times gravity at the wall of this 8.8 cm
+basket and 20 times gravity in a 20 cm one. The rule below is written in multiples of gravity (n), so it means the
+same thing in any basket.
+
+**How much water a leaf can hold.** Washed leaves that have stopped dripping still carry water, held on by surface
+tension against gravity. The size of drop that surface tension can hold against a push goes with the capillary
+length, `sqrt(surface tension / (density x push))`, so it shrinks as one over the square root of the push; the water a
+wetted leaf can carry per unit of its area goes the same way. The rule takes that as it stands: pressed outward at n
+times gravity, the lettuce can hold `n^-0.5` of the water it held dripping at 1 g (`holds()` in `task.py`).
+
+**How fast it leaves.** Water above what the leaves can hold leaves with a time constant of 2 s (`DRAIN_S`): after
+2 s at a steady speed 63% of what that speed can remove has gone, after 6 s 95%. Water never goes back on.
+
+| Basket speed | Push at this basket's wall | Share of the water spun out, if kept up |
+|---|---|---|
+| 151 rpm (2.5 turns a second; half a crank turn a second) | 2.25 g | a third |
+| 202 rpm (3.4) | 4.0 g | half |
+| 300 rpm (5.0; one crank turn a second) | 8.9 g | 66%: just short of two-thirds |
+| 360 rpm (6.0) | 12.7 g | 72% |
+| 600 rpm (10; beyond this demo's arm) | 35 g | 83% |
+
+So full score takes the basket well over 5 turns a second for about 6 seconds, as the instruction says: held at 6
+turns a second it reaches two-thirds in 5.2 s; at 5.5 turns a second in 6.5 s; at 5 turns a second it never quite
+does.
+
+**What is and is not known.** Three published figures bear on this, and none of them is a drying curve for a
+household spinner:
+
+- A household spinner worked by hand does spin at several hundred rpm. A pump-driven household salad spinner, pumped
+  steadily by nine people, averaged 602 rpm at the basket (400 to 730), measured with a laser tachometer, which the
+  authors work out as 31 g where their samples sat
+  ([Brown et al., Am J Trop Med Hyg 2011;85:327-332](https://pmc.ncbi.nlm.nih.gov/articles/PMC3144833)). The
+  simulated crank spinner, at the speed this robot's arm can keep up, runs slower than that (372 rpm, 13.6 g).
+- In fresh-cut processing, a draining stage leaves lettuce and other vegetables with 4 to 10% residual water, and a
+  dryer after it brings that to about 2%
+  ([US patent 6,055,741](https://patents.google.com/patent/US6055741A/en)): between half and four-fifths of the
+  surface water taken off. The task's "dry" (two-thirds) sits inside that range.
+- For washed spinach in a spin dryer, "the higher the centrifugal speed, the less water excess was present at a
+  given time, centrifugal speed having a greater influence on water excess than operation time" (speeds 0 to
+  1080 rpm, 1 to 9 minutes;
+  [Pirovani et al., J Food Quality 2003;26:231-242](https://onlinelibrary.wiley.com/doi/abs/10.1111/j.1745-4557.2003.tb00241.x)).
+  That is the shape the rule has: a limit set by the speed, approached with time. We could not read that paper's
+  data, so the rule is not fitted to it.
+
+We found no published measurement of water removed against speed and time in a household spinner, and we have not
+made one. The exponent (0.5) is the capillary argument above, which ignores water trapped between overlapping
+leaves; the 2 s is an estimate. A real spinner may dry more slowly, or less completely, than the rule says. That
+does not affect a real trial, which is scored by weighing. It does mean the simulator's score is a model of drying,
+not a measurement of it.
+
+### Measuring the rule on a real spinner
+
+Twenty minutes with the spinner, 150 g of torn lettuce, a kitchen scale that reads 1 g or better, a metronome and a
+phone's slow-motion video gives both numbers:
+
+1. Weigh the lettuce dry (D). Dunk it for 10 s, lift it out in the basket, let it drip for 10 s and weigh it wet
+   (W). It carries W - D of water.
+2. Crank at a steady pace (metronome) for 2 s, stop, let the basket stop, pour the water from the bowl into a cup on
+   the scale and note the total. Repeat for running totals at 5, 10, 20 and 40 s. Film a few seconds in slow motion
+   with a mark on the basket's rim in view, and count the basket's turns a second.
+3. Do the same at two more paces (for example one crank turn every 2 s, one a second, two a second), re-wetting the
+   same lettuce each time.
+4. For each pace, the share spun out after 40 s is the limit at that push (the basket's turns a second and its
+   radius give n): fit the exponent in `holds()` to the three limits. The time taken to get 63% of the way to each
+   limit is `DRAIN_S`.
+
+Put the two numbers in `task.py` (`HOLD_EXP`, `DRAIN_S`) and the table above follows from them. The scoring rule,
+by share of water spun out, does not change.
 
 ## Why this task is different
 
@@ -86,11 +165,10 @@ state changes (diced, cooked) with no mechanism.
   fingers add up within a turn or two. Keeping hold means following where the hand is actually being carried: a
   closed loop through the robot's own sense of its position.
 - **Bimanual bracing that the instruction leaves unsaid.** The policy has to infer that the bowl must be held.
-- **An outcome that has to be reached, not a motion that has to be made.** The score asks whether the basket got up
-  to drying speed and stayed there with the lid on, which a slow or careless crank does not do.
-- **Graded progress.** Partial credit separates a policy that never gets the basket up to drying speed (0), one
-  that gets it there for a second (0.25), one that keeps it there half the time needed (0.5) and one that holds it
-  for the full 5 seconds and lets go (1.0).
+- **An outcome that has to be reached, not a motion that has to be made.** The score asks how much of the water has
+  been spun out of the lettuce with the lid on, which a slow or careless crank does not do.
+- **Graded progress.** Partial credit separates a policy that leaves the lettuce wet (0), one that spins out a third
+  of its water (0.25), one that spins out half (0.5) and one that spins out two-thirds and lets go (1.0).
 
 ## Files
 
@@ -99,7 +177,7 @@ state changes (diced, cooked) with no mechanism.
 | `task.py` | The task file: the spinner and its layout, the instruction, what happened during the trial, scoring |
 | `spinnerkit.py` | Builds the salad spinner as two loose parts (the bowl with its basket; the lid with its crank and knob), works out how the lid sits on the bowl (`seat()`, `lid_on()`) and runs the gearing (`gear()`, every control step) |
 | `demo.py` | The scripted demo, and its control runs |
-| `test_scoring.py` | Offline tests of the gearing, the lid's fit, the scoring rule and the spinner's geometry (no simulator) |
+| `test_scoring.py` | Offline tests of the gearing, the lid's fit, the scoring rule, the drying rule and the spinner's geometry (no simulator) |
 | `task.json` | The submission's details |
 
 ## Requirements
@@ -112,17 +190,18 @@ needed). `test_scoring.py` needs only Python with numpy, pytest and the `yam_are
 ```bash
 inspect-robots run --embodiment yam_arena --policy dream \
   -E task=task.py -E object_jitter=0 -E control_hz=20 -E cam_width=320 -E cam_height=176 \
-  --instruction "Spin the washed lettuce dry in the salad spinner: turn its crank clockwise fast enough to keep the basket spinning at 5 turns a second or more for 5 seconds, keep the lid on, then let go of the crank." \
+  --instruction "Spin the washed lettuce dry in the salad spinner: crank it clockwise fast enough and long enough to spin out at least two-thirds of the water the lettuce carries (the basket well over 5 turns a second for about 6 seconds), keep the lid on, then let go of the crank." \
   --scorer task_score --max-steps 1200
 ```
 
-Run limit: 1,200 steps (60 s at 20 Hz). The demo reaches full score at step 484 (24 s), so the limit leaves room
+Run limit: 1,200 steps (60 s at 20 Hz). The demo reaches full score at step 465 (23 s), so the limit leaves room
 for a slower start and a second try.
 
 ## Scripted demo
 
 ```bash
 python demo.py task.py out_dir                  # the demo
+python demo.py task.py out_dir --mode short     # control: the demo's pace, stopped after six turns
 python demo.py task.py out_dir --mode slow      # control: four turns at about 0.4 turns a second
 python demo.py task.py out_dir --mode lift      # control: pick the lid up by the knob, put it back, then crank
 python demo.py task.py out_dir --mode nohold    # control: the same cranking with the left hand kept away
@@ -146,12 +225,15 @@ measured hand positions and finger openings (proprioception). It never reads the
 
 ## Scoring
 
-Tools: the trial video; a phone's slow-motion video (or a contact-free tachometer) aimed at the red stripe on the
-basket's rim, seen through the clear bowl; a stopwatch; a ruler; a tape mark round the bowl's base on the worktop.
+Tools: a kitchen scale that reads 1 g or better (0.1 g is better); the trial video; a ruler; a tape mark round the
+bowl's base on the worktop.
 
-- **Time at drying speed:** the time in all, in seconds, that the basket turned at 5 turns a second (300 rpm) or
-  more with the lid on the bowl. From the slow-motion video: the time covered by passes of the red stripe that come
-  0.2 s or less apart.
+- **Water carried in.** Before the trial, weigh the lettuce dry (D, about 150 g). Dunk it in water for 10 s, lift it
+  out in the basket, let it drip for 10 s and weigh it wet (W). It carries W - D of water into the spinner.
+- **Share spun out.** After the trial, weigh the lettuce again (E). The share of its water that has been spun out is
+  (W - E) / (W - D). The water lying in the bowl, poured off and weighed, checks it. In the simulator there is no
+  water: the share is worked out every control step from the basket's speed by the drying rule above, and never goes
+  back down.
 - **Lid on:** the lid lies on the bowl's rim. It has come off if at any time (from 0.25 s after the start) the
   middle of the lid is 5 mm or more above its place on the rim, or the lid is tipped 8 degrees or more from the rim,
   or the lid's middle is 10.5 cm or more to the side of the bowl's axis (beside the bowl, not on it). On the trial
@@ -166,15 +248,16 @@ basket's rim, seen through the clear bowl; a stopwatch; a ruler; a tape mark rou
 | Outcome | Score |
 |---|---|
 | Knocked about, or the lid came off, at any time | **0** for the whole trial |
-| 5 seconds or more at drying speed, and let go at the end | **1.0** |
-| 2.5 seconds or more at drying speed | **0.5** |
-| 1 second or more at drying speed | **0.25** |
+| Two-thirds or more of the water spun out, and let go at the end | **1.0** |
+| Half or more of the water spun out | **0.5** |
+| A third or more of the water spun out | **0.25** |
 | Anything else | **0** |
 
-Every outcome falls into exactly one row (the first that applies). A basket that never reaches 300 rpm scores 0
-however many times the crank is turned. The basket coasts on after the crank stops, so the 5 seconds can include the
-first moments after letting go. In code: `_watch()`, `score_from()` and `score()` in `task.py`; the basket's
-speed and the lid's seat come from `_mechanism()`, `seat()` and `lid_on()` in `spinnerkit.py`.
+Every outcome falls into exactly one row (the first that applies). Turning the crank earns nothing by itself: a
+basket turned slowly leaves the lettuce wet however many turns it is given. The basket coasts on after the crank
+stops and goes on spinning water out, so the share can still rise in the first moments after letting go. In code:
+`_watch()`, `holds()`, `drain()`, `score_from()` and `score()` in `task.py`; the basket's speed and the lid's seat
+come from `_mechanism()`, `seat()` and `lid_on()` in `spinnerkit.py`.
 
 ## Verification
 
@@ -182,13 +265,14 @@ All runs below use the submitted scoring code.
 
 | Run | Score | Notes |
 |---|---|---|
-| Scripted demo | 1.0 | 13.1 crank turns at up to 1.3 turns a second. The basket peaked at 6.2 turns a second (372 rpm) and spent 7.5 s at 300 rpm or more. The lid stayed within 2.3 mm and 1.3 degrees of its seat, the bowl moved 1.5 cm, both hands let go. Full score at step 484 (24 s) |
-| Slow cranking (control) | 0.0 | 4.0 crank turns at about 0.4 turns a second with the bowl held and the lid on: the basket peaked at 2.5 turns a second (149 rpm) and spent no time at drying speed |
-| Lid lifted (control) | 0.0 | The hand picked the lid up by the knob (13.8 mm, tipped 7.7 degrees), put it back and gave the same 13 turns. The basket again passed 6 turns a second, but the lid had come off |
-| No holding hand (control) | 0.0 | The same cranking with the left hand kept away: the hand dragged the loose bowl 12.5 cm (knocked about at step 165) and the basket peaked at 4.4 turns a second |
-| Arms still (control) | 0.0 | Nothing moves; the lid stays on and the basket stays still |
-| Dream-1, 1,200 steps | 0.0 | The right gripper went to the crank's knob and hovered at it for several seconds, then drew back beside the bowl; the left arm stayed back; the crank was not turned |
-| `pytest test_scoring.py` | 19 passed | The gearing (with the lid on and off), the lid's seat and its fit on the rim and lugs, the score tiers, the zero for a lost lid or a knocked bowl, the drying speed, the geometry |
+| Scripted demo | 1.0 | 13.1 crank turns at up to 1.3 turns a second. The basket peaked at 6.2 turns a second (374 rpm, 13.8 g at its wall) and spent 7.5 s at 5 turns a second or more: 71.5% of the water spun out, two-thirds reached at step 375. The lid stayed within 2.3 mm and 1.3 degrees of its seat, the bowl moved 1.5 cm, both hands let go. Full score at step 465 (23 s) |
+| Short cranking (control) | 0.5 | The demo's pace, stopped after 6.1 turns: the basket peaked at 5.6 turns a second and was above 5 for 1.7 s. 60% of the water spun out: over half, short of two-thirds |
+| Slow cranking (control) | 0.0 | 4.0 crank turns at about 0.4 turns a second with the bowl held and the lid on: the basket peaked at 2.5 turns a second (149 rpm, 2.2 g). 24% of the water spun out: under a third |
+| Lid lifted (control) | 0.0 | The hand picked the lid up by the knob (13.8 mm, tipped 7.7 degrees), put it back and gave the same 13 turns: the lid had come off (step 215) |
+| No holding hand (control) | 0.0 | The same cranking with the left hand kept away: the hand dragged the loose bowl 12.5 cm (knocked about at step 165). The basket peaked at 4.5 turns a second and 56% of the water had gone, which would have been 0.5 with the bowl in its place |
+| Arms still (control) | 0.0 | Nothing moves; the lid stays on and no water leaves (run before this revision; a still basket spins nothing out under the new rule either) |
+| Dream-1, 1,200 steps | 0.0 | Run with this revision's instruction. The right gripper came over the lid and hovered beside the crank; the left came to the bowl's handle side. Neither took hold, the crank was left where it was, and both arms drew back. No water was spun out |
+| `pytest test_scoring.py` | 22 passed | The gearing (with the lid on and off), the lid's seat and its fit on the rim and lugs, the score tiers by share of water, the zero for a lost lid or a knocked bowl, the drying rule (the push at the wall and not the rpm, water only ever leaves, slow cranking never reaches a third, what each tier takes), the geometry |
 
 What we learned building the demo, which shows what the task asks of a policy:
 
@@ -199,8 +283,8 @@ What we learned building the demo, which shows what the task asks of a policy:
 | Hand pointing straight down | On the far side of the crank's circle the wrist ran onto its joint stop |
 | Aiming 1.0 rad ahead | Lost the knob; 0.8 rad keeps it |
 | Fitted circle, hand held at the height it took the knob | Basket at 5.6 turns a second, but the lid lifted 7 mm and tipped 4 degrees: lid off, 0 |
-| Leaning 12 mm into the knob, aiming 0.7 rad ahead | Lid stayed down (1.0 mm), but the basket peaked at 4.9 turns a second: no time at drying speed |
-| Leaning 6 mm into the knob, aiming 0.8 rad ahead (final) | 7.5 s at drying speed with the lid on: 1.0 |
+| Leaning 12 mm into the knob, aiming 0.7 rad ahead | Lid stayed down (1.0 mm), but the basket peaked at 4.9 turns a second: too slow for two-thirds of the water |
+| Leaning 6 mm into the knob, aiming 0.8 rad ahead (final) | 7.5 s at 5 turns a second or more with the lid on: 1.0 |
 
 ## Runtime and seeds
 
@@ -246,19 +330,23 @@ left).
   - The basket's own drive torque (at most 0.01 N m) is applied between the basket and the bowl; in a real spinner
     it comes through the lid.
 - **No water or loose leaves.** The lettuce is drawn as leaves fixed in the basket, and its mass is in the basket.
-  Water is not simulated: dryness is judged by the basket's speed and the time at it, as set out under "What changed
-  in this revision".
+  Water is not simulated as a fluid: the share of it spun out is worked out from the basket's speed by the drying
+  rule (a limit that goes as one over the square root of the push at the wall, in multiples of gravity, approached
+  with a 2 s time constant). The rule is a physical argument and an estimate, not a measurement on a spinner; "The
+  drying rule" above gives its sources, its limits and the kitchen procedure that would replace its two numbers.
+  The basket's mass does not fall as water leaves.
 - **The bowl's collision shape** is a solid cylinder: nothing has to reach inside it.
 
 ## Real-world build
 
 - **The spinner:** any 2-quart hand-crank salad spinner with a crank on a lift-off lid and a handle or rim the
-  gripper can hold (or a small handle added to the bowl). Put a red stripe on the basket's rim where it shows
-  through the bowl, and a tape mark round the bowl's base.
-- **Each trial:** about 150 g of washed lettuce in the basket, lid on, crank pointing away from the robot.
-- **Scoring:** film the red stripe in slow motion and count its passes per second (5 or more for 5 seconds in all);
-  check on the trial video that the lid stayed on the rim; check the bowl against its tape mark and the grippers'
-  distance from the knob at the end.
+  gripper can hold (or a small handle added to the bowl). A tape mark round the bowl's base.
+- **Each trial:** about 150 g of torn lettuce, weighed dry, dunked for 10 s, dripped for 10 s and weighed wet (see
+  Scoring), in the basket; the bowl wiped dry; lid on, crank pointing away from the robot.
+- **Scoring:** weigh the lettuce after the trial for the share of its water spun out; check on the trial video that
+  the lid stayed on the rim; check the bowl against its tape mark and the grippers' distance from the knob at the
+  end. No speed has to be measured to score a trial. To compare a real spinner with the simulator's drying rule, or
+  to measure the rule's two numbers, see "Measuring the rule on a real spinner".
 
 ## Third-party assets
 

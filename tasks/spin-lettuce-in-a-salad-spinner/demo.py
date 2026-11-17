@@ -1,18 +1,21 @@
 """Demo for the salad-spinner task, run in the yam_arena embodiment.
 
-    python demo.py task.py out_dir [--window] [--max-steps 1200] [--no-record] [--mode spin|nohold|slow|lift|still]
+    python demo.py task.py out_dir [--window] [--max-steps 1200] [--no-record]
+                                   [--mode spin|short|nohold|slow|lift|still]
 
 1. The left hand comes straight down on the bowl's side handle and holds it between its fingers.
 2. The right hand, leaning out from its arm's base, comes down on the crank's knob and takes it between its fingers.
 3. It turns the crank clockwise thirteen times at about one and a quarter turns a second, leaning lightly on the knob so
    that the lid stays down on the bowl. The knob carries the hand round the crank's real circle, so each control step
    the hand works that circle out from where it has just been and aims a little further round it. The knob turns in
-   its fingers; the basket spins up past 5 turns a second and stays there. If its fingers close on nothing (the knob
+   its fingers; the basket spins up past 5 turns a second and stays there until two-thirds of the lettuce's water
+   has been spun out. If its fingers close on nothing (the knob
    has slipped out), it opens them and takes the knob again where it last held it.
 4. It lets go of the knob and rises clear; the left hand lets go of the handle.
 
-Controls: ``--mode nohold`` does the same cranking with the left hand kept away, so nothing holds the bowl;
-``--mode slow`` cranks four turns at about 0.4 turns a second (the basket never gets up to drying speed);
+Controls: ``--mode short`` cranks at the demo's pace but stops after six turns (some of the water is spun out, not
+two-thirds); ``--mode nohold`` does the same cranking as the demo with the left hand kept away, so nothing holds the
+bowl; ``--mode slow`` cranks four turns at about 0.4 turns a second (too slow to spin out a third of the water);
 ``--mode lift`` picks the lid up off the bowl by the knob, puts it back and then cranks (the lid came off);
 ``--mode still`` keeps both arms still (a scene check).
 
@@ -180,7 +183,7 @@ LEAN = math.radians(25.0)                # the cranking hand leans this far out 
 LEAD = 0.8                               # rad: the hand aims this far round ahead of where it is
 SLOW_LEAD = 0.2                          # rad: the same for the slow control (about 0.4 turns a second)
 RAMP_S = 2.5                             # s over which the lead eases in
-TURNS, SLOW_TURNS = 13.0, 4.0            # crank turns given
+TURNS, SLOW_TURNS, SHORT_TURNS = 13.0, 4.0, 6.0     # crank turns given: the demo, the slow control, the short control
 PRESS = 0.006                            # m: while cranking the hand is sent this far below where it took the knob. It
                                          # cannot slide down the knob, so it leans on it and keeps the lid down
 FIT_STEPS = 20                           # the hand's last second of positions, for the circle it is going round
@@ -319,6 +322,8 @@ def script(T, left, right, mode: str = "spin"):
         yield from hold(T, left)
     if mode == "slow":
         yield from crank(T, right, turns=SLOW_TURNS, lead_max=SLOW_LEAD)
+    elif mode == "short":
+        yield from crank(T, right, turns=SHORT_TURNS)
     else:
         yield from crank(T, right, lift=mode == "lift")
     if mode != "nohold":
@@ -436,7 +441,7 @@ if __name__ == "__main__":
     ap.add_argument("--max-steps", type=int, default=1200)
     ap.add_argument("--window", action="store_true", help="show the Isaac Sim window on the instance's desktop")
     ap.add_argument("--no-record", action="store_true")
-    ap.add_argument("--mode", default="spin", choices=("spin", "nohold", "slow", "lift", "still"))
+    ap.add_argument("--mode", default="spin", choices=("spin", "short", "nohold", "slow", "lift", "still"))
     ap.add_argument("--trace-every", type=int, default=5, help="steps between entries of the trace in result.json")
     a = ap.parse_args()
     sys.path.insert(0, str(Path(a.task).resolve().parent))
