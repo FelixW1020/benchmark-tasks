@@ -1,0 +1,22 @@
+{
+  "title": "Slide an edge guard onto a chef's knife with two hands, never going near the bare edge, and leave the knife on the board",
+  "category": "Societal relatability",
+  "keywords": [
+    "bimanual",
+    "kitchen",
+    "chef's knife",
+    "edge guard",
+    "thin-slot insertion",
+    "sharp edge",
+    "knife storage"
+  ],
+  "instruction": "Put the edge guard on the chef's knife without touching the knife's cutting edge, then leave the knife lying on the cutting board.",
+  "context": "A sharp knife kept in a drawer or carried in a knife roll gets an edge guard first. Victorinox, of its own blade protection: \"Many of us store our knives in kitchen drawers. As they knock against other utensils they can become blunt, and if left uncovered they may cut your hand as you rummage in the drawer.\" America's Test Kitchen: \"If you store your knife in a drawer or travel with it in a knife roll, you might want to get a knife guard.\" The maker of the guard used here sells it as \"Ideal for drawer storage, knife rolls, or travel\". Putting it on is a two-handed job done right next to the edge: one hand holds the knife by its handle, the other brings a 3.5 mm slot onto a 20 cm edge, and no finger may go near the edge while it is still bare.",
+  "setup": "Cm from the midpoint between the arm bases, x away from the robot, y left; heights above the table, which stands in for a kitchen counter. Cutting board, fixed: walnut, 45.7 (y) x 30.5 (x) x 3.8 cm (18 x 12 x 1.5 in), front edge at x 21.5, centred on y 0. Chef's knife, loose: stamped stainless blade 20 cm long, 5.3 cm tall at the heel and 2.3 mm thick at the spine; moulded black handle 14 cm long, 3 cm tall, 2 cm thick; 34 cm overall, 181 g. It lies on its side on the board, handle to the left, blade pointing right, cutting edge toward the robot: heel (the handle end of the edge) at (28.5, 5.5), tip at (31.7, -14.5), handle from y 5.5 to 19.5. Edge guard, loose: a folded PVC channel 21.6 cm long, 4.9 cm wide and 5.9 mm thick (two 1.2 mm walls 3.5 mm apart, joined along one long edge, open along the other and at both ends), 30 g. It stands on its open side on the table in front of the board, along the board's front edge, leaning 8 degrees onto that edge, folded edge up (4.9 cm above the table); it spans y 6.0 to -15.6. Both arms start in their rest pose. Second layout (GUARD_LOT=B): heel at (29.3, 4.0), guard spanning y 3.5 to -18.1.",
+  "scoring": "The edge is the cutting edge from 4 mm in front of the heel to the tip. A point of it is covered when it is inside the guard's slot: between the two walls, within the guard's length, at least 5 mm in from the slot's open side. Otherwise it is bare. Watched through the whole trial (video): 0 if any part of either arm, upper arm to fingertips, comes within 1 cm of a bare point of the edge. Otherwise, from the end state (photo and ruler): 0.25 if at least a quarter of the edge is covered; 0.5 if all of it is; 0.75 if all of it is and the guard is seated (the straight 9 cm of edge next to the heel within 4 mm of the slot's bottom: the spine then stands no more than 11 mm out of the guard at the heel); 1.0 if, as well, the knife lies on the board (its lowest point within 4 mm of the board's top, no part of knife or guard beyond the board's edge), both arms are at least 3 cm from knife and guard, and both are at rest (under 2 cm/s and 0.5 rad/s). Anything else scores 0.",
+  "run_limit": "1,500 steps (75 s at 20 Hz)",
+  "reset_notes": "Take the guard off, lay the knife on its mark and lean the guard against the board's front edge. Nothing is consumed.",
+  "fidelity": "Rigid parts at full size. The guard is a rigid channel with a 3.5 mm slot. A real PVC guard's walls lie against the blade and hold it by friction: the light push that takes is left out, and the simulated guard stays on by resting on the blade. Its entry notch is not modelled. The blade's collider is a stepped wedge of boxes. Edge curve, wall thickness and balance are estimates. Nearness to the edge is judged by distance, once per control step. Not tried on a physical rig.",
+  "scores": "Dream-1 run: 0.0; demo: 1.0",
+  "media": "M-X3T4BU"
+}
