@@ -1,0 +1,23 @@
+{
+  "title": "Put a clip-on shade on a candlestick lamp: lift it over the bulb and press its fitter home without tipping the lamp",
+  "category": "Societal relatability",
+  "keywords": [
+    "lampshade",
+    "clip-on fitter",
+    "hidden alignment",
+    "high reach",
+    "press fit",
+    "thin-walled part",
+    "steadying hand",
+    "household"
+  ],
+  "instruction": "Put the shade on the lamp.",
+  "context": "Putting a shade back on a lamp after dusting it, changing its bulb or unpacking it is an ordinary household job. A clip-on shade has no screw or harp: wire loops inside its top slide down over the bulb and grip it. The shade has to be held by its top without crushing or tilting it, lifted clear over a bulb whose tip is 27 cm above the table, lined up with the bulb's axis although the fitter is hidden inside the shade (its ring has an 11 mm opening for the bulb's tip), and pressed lightly until the ring is home: its own weight leaves it hanging on the loops. The lamp is narrow-based; by its weight (an estimated 0.8 kg) and 8.3 cm base a sideways push of about 1.5 N at the bulb would start it tipping, so the other hand can steady its stem while the shade goes on.",
+  "setup": "Station table; x is away from the robot from the midpoint between the arm bases, y to its left. (1) A brass candlestick accent lamp, 11 in (27.9 cm) tall with its shade on: round base 8.3 cm (3 1/4 in) wide and 1.2 cm thick, turned foot, stem 2 cm thick, drip pan, candle cup with its top 19.6 cm above the table, about 0.8 kg; a B10 torpedo candelabra bulb (E12 base, 32 mm across, glass 7.7 cm tall) is screwed in, its tip 27.3 cm above the table. Unplugged, cord led away. It stands at x 30 cm, y -13 cm. (2) Its clip-on shade, standing on the table wide end down at x 30 cm, y -33 cm, two of its panels facing left and right: six flat panels of fabric on a stiff backing, 3 in (7.6 cm) across the top, 5 in (12.7 cm) across the bottom, 4 1/4 in (10.8 cm) high, about 50 g. Inside its top, 1.3 cm down: three wire spokes to a ring with an 11 mm opening, and two sprung wire loops (16 x 32 mm, 1.6 mm wire) hanging from the ring, 16 mm apart at their lower ends. Layout B (SHADE_LOT=B): lamp at x 28, y -10.5 cm; shade at x 32.5, y -32 cm, turned 10 degrees clockwise seen from above.",
+  "scoring": "Scored at the end of the trial. 0 if the lamp leaned 20 degrees or more at any time (it went over). 1.0: the shade is seated (the fitter's ring within 4 mm of its place on the bulb's tip and within 4 mm of the lamp's axis; with a ruler: the shade's top 27.9 cm above the table, no more than 28.3 cm), level (its axis within 5 degrees of the lamp's: the high and low sides of its top differ by no more than 7 mm), the lamp upright within 3 degrees and within 3 cm of where it started, both grippers at least 3 cm from shade and lamp, and both at rest (under 2 cm/s and 0.5 rad/s). 0.75: seated, let go and at rest, but the shade is 5 to 12 degrees off level, or the lamp has been moved more than 3 cm or left leaning. 0.5: the shade hangs on the bulb without being home (ring within 1 cm of the lamp's axis and no more than 4.5 cm above its place, shade within 30 degrees of the lamp's axis), or is home but 12 to 30 degrees off level; let go and at rest. 0.25: the bulb's tip is inside the shade in any other state (still held, or resting crooked). 0 otherwise, including a shade put on upside down.",
+  "run_limit": "1,200 steps (60 s at 20 Hz)",
+  "reset_notes": "Stand the lamp and the shade (wide end down) back on their marks. Nothing is consumed.",
+  "fidelity": "All parts rigid. The shade's panels are flat 2 mm plates; the real shade is bell-curved, gives a little and is listed 6 mm taller. Each fitter loop is a rigid wire rectangle on a sprung hinge (stiffness and preload are estimates), not one bent spring wire; ring and loops hold the bulb by friction as modelled, not measured. The bulb is a 12-sided convex outline of a B10. The lamp's weight (0.8 kg), its sizes other than height and base width, and the shade's weight (50 g) are estimates. No cord.",
+  "scores": "Dream-1 run: 0.0 (the right gripper closed beside the shade's top without taking it; the lamp was not touched); demo: 1.0",
+  "media": "M-UP9CM7"
+}
