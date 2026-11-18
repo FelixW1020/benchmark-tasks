@@ -1,0 +1,22 @@
+{
+  "title": "Set a two-part wind-up kitchen timer for 10 minutes: hold one part, wind the other to 55 first, then turn it back",
+  "category": "Societal relatability",
+  "keywords": [
+    "bimanual",
+    "kitchen timer",
+    "clockwork",
+    "wind-up",
+    "twist",
+    "two wrists",
+    "unstated rule"
+  ],
+  "instruction": "Set the kitchen timer for 10 minutes.",
+  "context": "A clockwork kitchen timer needs no battery and is a familiar kitchen tool. Setting one has a rule that is easy to miss. The maker's instructions for the timer modelled here (IKEA ORDNING, sheet AA-2096903-1): \"For the timer to ring, you must always turn it clockwise to 55 minutes [...] Then, turn the timer anticlockwise to the desired time\", and \"If the timer does not ring properly, the spring inside the clockwork is not tight enough.\" Other makers give the same rule with a 50- or 60-minute mark. Turned straight to 10 it counts down in silence and the food burns. The timer is one small cylinder in two parts: turned with one hand where it stands, the whole of it goes round on the counter, so one part has to be held while the other is turned through almost a full turn and most of the way back. The instruction says neither thing.",
+  "setup": "Cm from the midpoint between the arm bases, x away from the robot, y to its left. The table stands in for a kitchen counter; nothing else is on it. (1) Wind-up kitchen timer, loose, about 110 g (an estimate): a stainless-steel cylinder 6.0 cm across and 6.0 cm tall, in two parts that turn on each other about its axis, lower part 2.6 cm tall, upper part 3.3 cm, with a 0.6 mm seam between them. A 60-minute scale is printed in black round the lower part just under the seam: a tick for every minute, a longer tick and a numeral for every fifth (0, 5, ... 55), rising from left to right. The upper part has a red index bar on its side just above the seam and a red line across its top face from the middle to the rim over the bar. The reading is the scale mark under the index. It rises as the lower part is turned clockwise (seen from above) against the upper, with stops at 0 and at 59.5. At the start it reads 0. Layout A: the timer stands at (30, -6), its zero mark and index facing the robot. Layout B: it stands at (26, 5), zero mark and index facing the robot's left, turned 30 degrees toward the robot. Both arms start raised in the ready pose.",
+  "scoring": "Scored at the end. Reading: the scale mark under the index, in minutes (6 degrees to the minute). Wound: the reading has reached 54 or more (the 55-minute mark) at some time and has not been back to 0.5 or less since; on a real timer, the bell rings when it runs out. Left standing: the timer stands on the table with its axis within 10 degrees of upright, both grippers at least 3 cm from it, at rest (under 2 cm/s and 0.5 rad/s). 1.0: wound, left standing, reading 9 to 11. 0.75: wound, left standing, reading 7 to 13. 0.5: wound and left standing at any other reading. 0.25: wound but not left standing (still held, or lying down); or never wound but left standing reading 9 to 11 (it will count down and not ring). 0 otherwise, and whenever the timer has left the table. The timer runs once set, so the reading falls slowly while it stands. A trial ends once full score has held for 1 s.",
+  "run_limit": "1,800 steps (90 s at 20 Hz)",
+  "reset_notes": "Turn the lower part back anticlockwise to 0 (or let the timer run out) and stand the timer on its mark with the index facing as the layout says.",
+  "fidelity": "Rigid cylinders at the maker's 6 x 6 cm. Estimates, not measured: the split height (from the maker's drawing), 110 g, the stops, the clutch (0.035 N m) and mainspring (0.004 to 0.020 N m) torques, table friction. The real timer shows the minutes in a window in its upper part; here a scale is printed round the lower part. The clockwork is a hinge with a slipping clutch and a run-down drive; it ran down at about a quarter of a real timer's rate. No bell: wound means the reading reached 54.",
+  "scores": "Dream-1 run: 0.0 (both arms drew back to their bases with closed grippers; the right arm reached over the timer in the last 4 s; the timer was not moved); demo: 1.0",
+  "media": "M-BWM3WH"
+}
