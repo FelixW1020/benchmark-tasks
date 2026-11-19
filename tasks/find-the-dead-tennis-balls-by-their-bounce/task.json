@@ -1,0 +1,22 @@
+{
+  "title": "Find the two flat tennis balls among four by their bounce: flat ones into the grey bin, good ones into the blue box",
+  "category": "Societal relatability",
+  "keywords": [
+    "tennis ball",
+    "bounce test",
+    "sorting by a physical test",
+    "dynamic manipulation",
+    "catching",
+    "sports",
+    "household"
+  ],
+  "instruction": "Two of these four tennis balls have gone flat. Find them by their bounce: put the two flat ones in the grey bin and the two good ones in the blue box.",
+  "context": "Tennis balls lose their pressure and go flat (\"dead\"), and players sort old balls from good ones before they play. The usual check is a bounce: \"Drop both tennis balls from the same height. If one drops significantly lower than the other it's probably wrecked and needs replacing.\" The rule behind it: dropped 254 cm onto a rigid block, a ball in play has to come back 135 to 147 cm (ITF), 56% of the drop; a punctured ball's coefficient of restitution is 20% lower (Haake, Carre and Goodwill 2003), which makes 36%. The four balls here look and weigh the same, so they cannot be sorted by looking or by lifting: each has to be let go cleanly from a known height, its rebound judged, and the ball got back afterwards. Which two are flat differs between the two layouts.",
+  "setup": "Cm from the midpoint between the arm bases, x away from the robot, y left; the station table. (1) Tray, fixed: light wood, 32 x 9.2 x 2.1 cm outside (inside 30.4 x 7.6 cm, floor 6 mm, rim 1.5 cm above the floor), long side running away from the robot, centre (29, -26). (2) Four tennis balls in a row in the tray, 7.6 cm apart, nearest first at x 17.6, 25.2, 32.8, 40.4: yellow felt, 6.6 cm across, 57.6 g each; ball n carries n black pen dots at each pole, to tell the balls apart when scoring. Balls 2 and 3 are flat: they have lost their pressure and come back 36% of a drop; balls 1 and 4 are good and come back 56%. (3) Grey bin, fixed: an open plastic box, 15 x 15 cm inside, 9 cm deep, walls 4 mm, centre (12.5, -10). (4) Blue box, fixed: the same size, centre (28, 15). Both arms start in their rest pose. Second layout (BALL_LOT=B): tray centre (28, -25), bin (11.5, -8.5), box (29, 16); balls 1 and 4 are flat, 2 and 3 good.",
+  "scoring": "Scored at the end of the trial from where each ball lies (a photo; the dots say which ball is which). A ball counts once it is let go (both grippers at least 3 cm from it) and at rest (under 2 cm/s). It is in the bin, or in the box, when its middle is over the inside of that one and below its rim. 0 if any ball is in the wrong one of the two: a flat ball in the blue box, or a good ball in the grey bin. Otherwise 0.25 for each ball in its right place, a flat ball in the grey bin or a good ball in the blue box: 1.0 when all four are. A ball left in the tray, on the table, in a gripper or off the table counts for nothing either way. Sorting two and two without testing is right one time in six and scores 0 the other five.",
+  "run_limit": "1,800 steps (90 s at 20 Hz)",
+  "reset_notes": "Put the four balls back in the tray in the order of their dots. Nothing is used up, but a real ball's bounce changes with use and with time: check each ball's rebound before a session.",
+  "fidelity": "Balls are rigid spheres of true size and mass. A ball's bounce is one coefficient of restitution on every surface: 0.745 for a good ball (the ITF's 141 cm from 254 cm), 0.596 for a flat one (the 20% loss measured for a punctured ball), assumed the same at this low speed. Simulated rebounds are within 1% of these. No felt, spin, air drag or squeeze stiffness: a flat ball cannot be told by squeezing here. Rolling resistance is an angular damping (an estimate). Tray, bin and box are fixed.",
+  "scores": "Dream-1 run: 0.0 (the right gripper came down among the balls in the tray; none was lifted out); demo: 1.0 (the demo video shows the overhead camera beside the left camera)",
+  "media": "M-GHHC8D"
+}
