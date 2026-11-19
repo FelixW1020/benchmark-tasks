@@ -1,6 +1,6 @@
 """Demo for the electrosurgical pencil task, run in the yam_arena embodiment.
 
-    python demo.py task.py out_dir [--window] [--max-steps 900] [--no-record] [--mode full|pinch|tray|still]
+    python demo.py task.py out_dir [--window] [--max-steps 900] [--no-record] [--mode full|pinch|tray|over|still]
 
 1. The right hand comes down over the pencil's handle behind its two keys (10.5 cm back from the nose) and pinches it
    there, pads on the keyed face and the face opposite, where there is no key to press.
@@ -10,7 +10,9 @@
    go, and draws back.
 
 Controls: ``--mode pinch`` takes the pencil the plain way, by the front of its handle: the pads close on the COAG key.
-``--mode tray`` takes it behind the keys and lays it in the instrument tray. ``--mode still`` keeps both arms still.
+``--mode tray`` takes it behind the keys and lays it in the instrument tray. ``--mode over`` has the left hand take it
+behind the keys and hold it out past the table's left edge, toward the patient's side. ``--mode still`` keeps both
+arms still.
 
 Every target comes from the layout constants in the task file and the sizes in ``esukit.py``. The only feedback is
 the hand's own measured position (the robot's proprioception), which it uses to correct for its sag. The demo never
@@ -125,6 +127,8 @@ TRAY_CARRY_UP = 0.100                    # ... and on the way to the tray, over 
 LEAD_IN = 0.020                          # the electrode's tip starts this far outside the holster's mouth
 STOP_SHORT = 0.004                       # the fingers stop this far from the mouth's lip
 TRAY_AT = (-0.055, 0.080)                # control: where the grasped point of the handle goes, in the tray's frame
+OVER_AT = (0.420, 0.525)                 # control: where the left hand holds the grasped point, 12.5 cm inside the left edge
+OVER_UP = 0.100                          # ... and how high above the drape
 GAIN, BIAS_MAX = 0.25, 0.020             # how fast, and how far, the hand corrects for its own sag
 
 
@@ -176,6 +180,8 @@ def plan(T) -> dict:
     tp, _ = T.tray_pose()
     tray = np.array([tp[0] + TRAY_AT[0], tp[1] + TRAY_AT[1], tp[2] + TCP_UP])
     return {"back": back, "grasp": grasp, "pinch": grasp - (T.GRASP - PINCH_AT) * back,
+            "over": np.array([OVER_AT[0], OVER_AT[1], T.FLOOR + OVER_UP]),
+            "show": frame(DOWN, (-1.0, 0.0, 0.0)),                              # the same hold, the electrode pointing to the robot's left
             "take": frame(DOWN, (math.sin(yaw), -math.cos(yaw), 0.0)),          # pads on the keyed face and the one opposite
             "give": frame(DOWN, (-inward[1], inward[0], 0.0)),                  # the same hold, the electrode pointing into the holster
             "before": before, "home": home, "tray": tray, "nose_in": T.GRASP - (K.H_FLARE + K.PAD_HALF + STOP_SHORT)}
@@ -190,6 +196,8 @@ def script(T, left, right, mode: str = "full", idle_s: float = 45.0):
     p = plan(T)
     up = np.array([0.0, 0.0, 1.0])
     at = p["pinch"] if mode == "pinch" else p["grasp"]
+    if mode == "over":                  # control: the left hand does it
+        right = left
 
     # 1. Over the handle, down astride it, and take it.
     above = at + 0.080 * up
@@ -209,6 +217,14 @@ def script(T, left, right, mode: str = "full", idle_s: float = 45.0):
         yield from right.set_grip(gap(OPEN_GAP), 0.6)
         yield from glide(sag, at + 0.100 * up, 1.2, p["take"])
         yield from wait(3.0)
+        return
+
+    if mode == "over":                  # control: hold it out past the table's left edge, electrode toward the patient's side
+        high = T.FLOOR + OVER_UP
+        yield from glide(sag, (at[0], at[1], high), 1.2, p["take"])
+        yield from glide(sag, p["over"], 4.0, p["show"], rot_from=p["take"])
+        yield from glide(sag, p["over"], 0.5, p["show"])
+        yield from wait(idle_s)
         return
 
     if mode == "tray":                  # control: lay it in the instrument tray
@@ -360,7 +376,7 @@ if __name__ == "__main__":
     ap.add_argument("--max-steps", type=int, default=900)
     ap.add_argument("--window", action="store_true", help="show the Isaac Sim window on the instance's desktop")
     ap.add_argument("--no-record", action="store_true")
-    ap.add_argument("--mode", default="full", choices=("full", "pinch", "tray", "still"))
+    ap.add_argument("--mode", default="full", choices=("full", "pinch", "tray", "over", "still"))
     ap.add_argument("--trace-every", type=int, default=5, help="steps between entries of the trace in result.json")
     ap.add_argument("--cam", default="320x176", help="recorded frame size, e.g. 640x352")
     a = ap.parse_args()

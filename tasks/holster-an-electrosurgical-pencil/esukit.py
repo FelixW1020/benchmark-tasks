@@ -18,6 +18,13 @@ Frames (m):
   the holster, its z up.
 - :class:`Tray`: an instrument tray on a draped Mayo stand, with three instruments in it, fixed. ``pos`` is the middle
   of the tray's floor (its top surface); its x runs along its short side.
+- :class:`Patient`: the draped patient, fixed: the left forearm and hand lying palm up on the hand table, the drape's
+  cuff round the upper arm, and the draped body on the operating table beside it. ``pos`` is the point on the drape
+  under the middle of the wrist; the axes are the world's (the fingers point along -y, the body lies along x).
+- :class:`Generator`: the electrosurgical generator, fixed. ``pos`` is the middle of the bottom edge of its front
+  panel; its x runs across the panel, its y out of it, its z up.
+- :class:`Lead`: a length of cord that does not move (from the cord clip to the generator), fixed: round bars along
+  ``path``, points given from ``pos``.
 
 All shapes are convex pieces built from point sets in NumPy when the task file is read, so the same numbers serve the
 scene, the scoring and the offline checks. Isaac Sim is reached only when the scene is built.
@@ -37,9 +44,10 @@ from dataclasses import dataclass, field
 import numpy as np
 from yam_arena.task_file import Box, ObjectState
 
-__all__ = ["Clip", "Holster", "Key", "KitState", "Link", "Pencil", "Tray", "cord_path", "env", "finger_points",
-           "gripper_points", "holster_pieces", "in_holster", "install", "is_box", "key_rest", "key_travel", "on_reset", "on_step",
-           "on_tray", "pencil_pieces", "place", "side_quat", "to_local", "tray_pieces", "turn_z", "write_pose"]
+__all__ = ["Clip", "Generator", "Holster", "Key", "KitState", "Lead", "Link", "Patient", "Pencil", "Tray", "arm_distance",
+           "cord_path", "env", "finger_points", "generator_boxes", "gripper_points", "holster_pieces", "in_holster", "install",
+           "is_box", "key_rest", "key_travel", "on_reset", "on_step", "on_tray", "patient_pieces", "pencil_pieces", "place",
+           "set_lamp", "side_quat", "to_local", "tray_pieces", "turn_z", "write_pose"]
 
 # -- the pencil (Pencil frame) -------------------------------------------------------------------------------------------
 HANDLE = 0.160                # handle length (data sheets of hand-switched pencils give 160 mm)
@@ -84,6 +92,31 @@ TRAY_WALL = 0.001
 STAND_H = 0.040               # the draped stand top under the tray, above the patient drape (an estimate; see README)
 STAND_PAD = 0.008             # the stand top shows this far round the tray
 
+# -- the patient (Patient frame). Adult sizes; every one an estimate ----------------------------------------------------------
+HAND_L = 0.176                # wrist crease to the tip of the middle finger
+PALM_L = 0.103                # wrist crease to the knuckles
+FOREARM_L = 0.260             # wrist to elbow
+CUFF_AT = 0.315               # the drape's cuff closes round the upper arm this far from the wrist
+SHOULDER_AT = 0.560           # the shoulder, from the wrist
+FLANK_AT = 0.520              # the near side of the body, from the wrist (the hand table ends 4.5 cm short of it)
+BODY_HALF = 0.200             # half the breadth of the draped body at the shoulders
+# boxes round the arm where it lies on the hand table, for the scorer (lo, hi): the hand with its thumb, the forearm,
+# and the upper arm with the drape over it
+ARM_BOXES = (((-0.047, -0.190, 0.0), (0.090, 0.000, 0.045)), ((-0.050, 0.000, 0.0), (0.050, 0.260, 0.090)),
+             ((-0.078, 0.260, 0.0), (0.078, 0.560, 0.150)))
+
+# -- the generator (Generator frame). Outside sizes from the maker's brochure; the front panel's layout is an estimate ----
+GEN_W, GEN_D, GEN_H = 0.356, 0.439, 0.111     # 35.6 cm wide, 43.9 cm long, 11.1 cm high
+GEN_FEET = 0.006
+SOCKET = (-0.0625, 0.026)     # the hand-switch socket's middle: x across the panel, z above its bottom edge
+RETURN_SOCKET = (-0.1375, 0.026)
+PLUG_OUT = 0.032              # a plug stands this far out of the panel
+
+SKIN, WOUND, GAUZE = (0.80, 0.60, 0.48), (0.52, 0.05, 0.06), (0.96, 0.96, 0.94)
+CUFF = (0.13, 0.36, 0.48)
+CASE, FASCIA, BLACK = (0.80, 0.81, 0.83), (0.16, 0.18, 0.21), (0.03, 0.03, 0.03)
+LED_RED, LED_GREEN = (1.00, 0.16, 0.08), (0.10, 0.95, 0.25)
+CUT_DIM, COAG_DIM, CUT_LIT, COAG_LIT = (0.32, 0.27, 0.05), (0.05, 0.12, 0.34), (1.00, 0.86, 0.10), (0.15, 0.45, 1.00)
 ABS, YELLOW, BLUE_KEY, STEEL = (0.93, 0.93, 0.90), (0.95, 0.80, 0.10), (0.10, 0.25, 0.75), (0.74, 0.75, 0.77)
 CORD, ORANGE, DRAPE = (0.88, 0.88, 0.86), (0.95, 0.62, 0.12), (0.20, 0.47, 0.60)
 FRICTION = (0.5, 0.4)
@@ -340,9 +373,108 @@ def tray_pieces() -> list:
 
 
 def clip_pieces() -> list:
-    """The cord clip stuck to the drape, and the cord running on from it to the table's far edge (drawn only)."""
+    """The cord clip stuck to the drape."""
     out = [(_box((-0.010, -0.009, -CORD_R - 0.001), (0.010, 0.009, CORD_R + 0.0035)), (0.25, 0.27, 0.30))]
     return out
+
+
+def _oval_y(y: float, hw: float, hh: float, cx: float = 0.0, n: int = 10) -> np.ndarray:
+    """A ring across a limb that runs along y and rests on the drape: half width ``hw`` (x), half height ``hh``."""
+    t = 2 * math.pi * np.arange(n) / n - math.pi / 2          # one point at the very bottom, one at the very top
+    return np.column_stack([cx + hw * np.cos(t), np.full(n, y), hh + hh * np.sin(t)])
+
+
+def _oval_x(x: float, hw: float, hh: float, cy: float, n: int = 10) -> np.ndarray:
+    """A ring across a body that runs along x and rests on the table: half width ``hw`` (y), half height ``hh``."""
+    t = 2 * math.pi * np.arange(n) / n - math.pi / 2
+    return np.column_stack([np.full(n, x), cy + hw * np.cos(t), hh + hh * np.sin(t)])
+
+
+def _tube(rings, color) -> list:
+    return [(np.vstack(pair), color) for pair in zip(rings, rings[1:])]
+
+
+def patient_pieces() -> dict:
+    """The draped patient, in the Patient's frame: ``skin`` the left forearm and hand, palm up; ``drape`` the cuff of
+    the drape's opening round the upper arm, the draped upper arm, shoulder, body and head, and the draped operating
+    table they lie on; ``field`` a gauze swab on the drape beyond the fingers; ``marks`` the incision on the forearm
+    and the stain on the swab (drawn only). Each is a list of (points, colour) pieces."""
+    skin = _tube([_oval_y(0.000, 0.029, 0.019), _oval_y(-0.030, 0.039, 0.016), _oval_y(-0.085, 0.043, 0.014),
+                  _oval_y(-PALM_L, 0.041, 0.011)], SKIN)                                              # the palm
+    base = -PALM_L + 0.002
+    for x0, length, r, spread in ((0.030, 0.072, 0.0090, 0.006), (0.010, 0.080, 0.0090, 0.001),
+                                  (-0.011, 0.074, 0.0085, -0.004), (-0.031, 0.058, 0.0075, -0.010)):   # index .. little
+        a = (x0, base, r + 0.002)
+        b = (x0 + 0.3 * spread, base - 0.55 * length, r + 0.008)
+        c = (x0 + spread, base - length + r, r + 0.022)                                             # a relaxed hand's fingers curl up
+        skin += [(_rod(a, b, r), SKIN), (_rod(b, c, r, 0.85 * r), SKIN)]
+    skin += [(_rod((0.034, -0.030, 0.020), (0.062, -0.068, 0.026), 0.0115, 0.0100), SKIN),            # the thumb
+             (_rod((0.062, -0.068, 0.026), (0.074, -0.100, 0.032), 0.0100, 0.0088), SKIN)]
+    skin += _tube([_oval_y(0.000, 0.029, 0.019), _oval_y(0.080, 0.036, 0.027), _oval_y(0.180, 0.046, 0.040),
+                   _oval_y(FOREARM_L, 0.048, 0.043), _oval_y(CUFF_AT, 0.050, 0.046)], SKIN)           # forearm, elbow
+    drape = _tube([_oval_y(CUFF_AT, 0.057, 0.052), _oval_y(CUFF_AT + 0.020, 0.057, 0.052)], CUFF)     # the opening's cuff
+    drape += _tube([_oval_y(CUFF_AT + 0.020, 0.060, 0.055), _oval_y(0.450, 0.064, 0.062),
+                    _oval_y(SHOULDER_AT, 0.075, 0.075)], DRAPE)                                       # the draped upper arm
+    mid = FLANK_AT + BODY_HALF - 0.010                                                              # the body's midline (y)
+    drape += _tube([_oval_x(0.060, 0.150, 0.060, mid), _oval_x(0.010, BODY_HALF, 0.095, mid), _oval_x(-0.120, 0.195, 0.115, mid),
+                    _oval_x(-0.300, 0.180, 0.105, mid), _oval_x(-0.470, 0.190, 0.100, mid), _oval_x(-0.620, 0.185, 0.090, mid),
+                    _oval_x(-0.980, 0.160, 0.070, mid)], DRAPE)                                       # shoulders to knees
+    drape += _tube([_oval_x(0.060, 0.062, 0.060, mid), _oval_x(0.115, 0.062, 0.060, mid), _oval_x(0.150, 0.075, 0.085, mid),
+                    _oval_x(0.215, 0.080, 0.098, mid), _oval_x(0.280, 0.070, 0.088, mid), _oval_x(0.315, 0.040, 0.050, mid)],
+                   DRAPE)                                                                           # neck and head
+    drape.append((_box((-1.030, FLANK_AT - 0.045, -0.100), (0.360, FLANK_AT + 0.500, 0.0005)), DRAPE))   # the draped operating table
+    field = [(_box((-0.040, -0.290, 0.0), (0.035, -0.215, 0.005)), GAUZE)]                           # a 7.5 cm gauze swab
+    marks = [(_rod((0.0, 0.035, 0.0450), (0.0, 0.095, 0.0570), 0.0035), WOUND),                       # the incision
+             (_box((-0.020, -0.270, 0.005), (0.010, -0.240, 0.0056)), WOUND)]                         # the swab's stain
+    return {"skin": skin, "drape": drape, "field": field, "marks": marks}
+
+
+def arm_distance(points, patient_pos) -> float:
+    """The distance (m) from the nearest of ``points`` (world) to the patient's arm where it lies on the hand table:
+    the boxes ARM_BOXES round the hand, the forearm and the upper arm. 0 inside a box."""
+    p = np.atleast_2d(np.asarray(points, float)) - np.asarray(patient_pos, float)
+    best = math.inf
+    for lo, hi in ARM_BOXES:
+        gap = np.maximum(np.maximum(np.asarray(lo) - p, p - np.asarray(hi)), 0.0)
+        best = min(best, float(np.linalg.norm(gap, axis=1).min()))
+    return best
+
+
+def generator_boxes() -> dict:
+    """The generator, in its own frame, as boxes (lo, hi, colour): ``case`` the cabinet and its feet; ``panel`` the
+    front panel's fascia, the unlit surround of each mode, the display windows, the sockets and the two plugs; ``lit``
+    the parts that glow while the generator is on (power lamp, the three power displays, the return-electrode lamp);
+    ``lamps`` the CUT and COAG surrounds, which glow only while that key's switch is closed. Seen from in front, a
+    point ``u`` to the right of the panel's middle is at x = -u."""
+    w = GEN_W / 2
+
+    def face(u0, u1, z0, z1, layer, color, out=None):
+        y0 = 0.002 + 0.001 * layer
+        return ((-u1, 0.002 if out else y0, z0), (-u0, out or y0 + 0.001, z1), color)
+
+    case = [((-w, -GEN_D, GEN_FEET), (w, 0.0, GEN_H), CASE)]
+    for sx in (-1.0, 1.0):
+        for y in (-0.040, -GEN_D + 0.040):
+            case.append(((sx * (w - 0.030) - 0.015, y - 0.015, 0.0), (sx * (w - 0.030) + 0.015, y + 0.015, GEN_FEET), BLACK))
+    panel = [((-w + 0.006, 0.0, GEN_FEET + 0.006), (w - 0.006, 0.002, GEN_H - 0.006), FASCIA)]
+    lit, lamps = [], {}
+    for name, u0, dim, glow in (("bipolar", -0.150, COAG_DIM, None), ("cut", -0.040, CUT_DIM, CUT_LIT),
+                                ("coag", 0.060, COAG_DIM, COAG_LIT)):
+        panel.append(face(u0 - 0.008, u0 + 0.063, 0.048, 0.100, 0, dim))                       # the mode's surround, unlit
+        if glow:
+            lamps[name] = face(u0 - 0.008, u0 + 0.063, 0.048, 0.100, 1, glow)                  # ... and lit
+        panel.append(face(u0, u0 + 0.055, 0.058, 0.084, 2, BLACK))                              # the power display's window
+        for d in (0.009, 0.031):                                                              # its two digits
+            lit.append(face(u0 + d, u0 + d + 0.015, 0.061, 0.081, 3, LED_RED))
+    lit.append(face(-0.168, -0.156, 0.024, 0.036, 0, LED_GREEN))                                # power on
+    lit.append(face(0.156, 0.166, 0.044, 0.052, 0, LED_GREEN))                                  # return electrode in contact
+    for u0, u1 in ((-0.135, -0.105), (-0.045, -0.010), (-SOCKET[0] - 0.0175, -SOCKET[0] + 0.0175),
+                   (-RETURN_SOCKET[0] - 0.0125, -RETURN_SOCKET[0] + 0.0125)):                   # bipolar, foot switch, hand switch, return
+        panel.append(face(u0, u1, 0.014, 0.038, 0, BLACK))
+    panel.append(face(-SOCKET[0] - 0.0155, -SOCKET[0] + 0.0155, SOCKET[1] - 0.007, SOCKET[1] + 0.007, 0, CORD, out=PLUG_OUT))
+    panel.append(face(-RETURN_SOCKET[0] - 0.0095, -RETURN_SOCKET[0] + 0.0095, RETURN_SOCKET[1] - 0.007, RETURN_SOCKET[1] + 0.007,
+                      0, (0.45, 0.50, 0.47), out=PLUG_OUT - 0.004))
+    return {"case": case, "panel": panel, "lit": lit, "lamps": lamps}
 
 
 def link_points() -> np.ndarray:
@@ -440,6 +572,28 @@ class Tray(_Part):
 
 
 @dataclass(frozen=True)
+class Patient(_Part):
+    quat: tuple = (0.0, 0.0, 0.0, 1.0)
+    mass: float | None = 30.0
+
+
+@dataclass(frozen=True)
+class Generator(_Part):
+    quat: tuple = (0.0, 0.0, 0.0, 1.0)
+    mass: float | None = 8.0
+
+
+@dataclass(frozen=True)
+class Lead(_Part):
+    """A fixed length of cord along ``path`` (points from ``pos``); ``solid`` False draws it without a collider."""
+    quat: tuple = (0.0, 0.0, 0.0, 1.0)
+    mass: float | None = 0.05
+    path: tuple = ()
+    radius: float = CORD_R
+    solid: bool = True
+
+
+@dataclass(frozen=True)
 class KitState(ObjectState):
     """A kit object as the simulator has it; ``pos`` is its own origin (see each class)."""
 
@@ -472,13 +626,15 @@ class _Author:
         self.root = root.GetPrim()
         self.looks, self.mats = {}, {}
 
-    def look(self, color, rough=0.6, metal=0.0, opacity=1.0) -> str:
+    def look(self, color, rough=0.6, metal=0.0, opacity=1.0, glow=False) -> str:
         from yam_arena.station import linear_rgb
 
-        key = (tuple(color), rough, metal, opacity)
+        key = (tuple(color), rough, metal, opacity, glow)
         if key not in self.looks:
             path = f"{self.path}/Looks/v{len(self.looks)}"
             kw = {"opacity": opacity} if opacity < 1.0 else {}
+            if glow:                                 # a lit lamp or display: it gives off its own colour
+                kw["emissive_color"] = linear_rgb(color)
             vis = self.sim_utils.PreviewSurfaceCfg(diffuse_color=linear_rgb(color), roughness=rough, metallic=metal, **kw)
             vis.func(path, vis)
             self.looks[key] = path
@@ -580,6 +736,19 @@ class _Author:
             bind_physics_material(str(prim.GetPath()), mat, stage=self.stage)
         return prim
 
+    def rod(self, path, p0, p1, radius, look, mat=None):
+        """A round bar with rounded ends from ``p0`` to ``p1`` (in the part's frame)."""
+        p0, p1 = np.asarray(p0, float), np.asarray(p1, float)
+        x = (p1 - p0) / np.linalg.norm(p1 - p0)
+        y = np.cross((0.0, 0.0, 1.0) if abs(x[2]) < 0.9 else (1.0, 0.0, 0.0), x)
+        y /= np.linalg.norm(y)
+        qx, qy, qz, qw = _quat(np.column_stack([x, y, np.cross(x, y)]))
+        double = self.UsdGeom.XformOp.PrecisionDouble
+        holder = self.UsdGeom.Xform.Define(self.stage, path)
+        holder.AddTranslateOp(precision=double).Set(self.Gf.Vec3d(*(float(v) for v in p0)))
+        holder.AddOrientOp(precision=double).Set(self.Gf.Quatd(qw, qx, qy, qz))
+        return self.capsule(f"{path}/bar", float(np.linalg.norm(p1 - p0)), radius, look, mat)
+
     def pieces(self, stem, pieces, mat, rough=0.6, metal_of=(), patch=0.0, opacity=1.0):
         for n, (pts, color) in enumerate(pieces):
             metal = 0.9 if tuple(color) in metal_of else 0.0
@@ -625,9 +794,60 @@ def _spawn_link(prim_path: str, cfg, translation=None, orientation=None, **kwarg
 def _spawn_clip(prim_path: str, cfg, translation=None, orientation=None, **kwargs):
     spec, a, m = _start(cfg, prim_path, translation, orientation, fixed=True)
     a.pieces(f"{prim_path}/p", clip_pieces(), m)
-    run = getattr(spec, "size", (0.2, 0.0, 0.0))[0]                    # the cord beyond the clip, drawn only
-    a.hull(f"{prim_path}/tail", _rod((0.0, 0.0, 0.0), (run, 0.0, 0.0), CORD_R), a.look(CORD, rough=0.7))
     return a.root
+
+
+def _spawn_patient(prim_path: str, cfg, translation=None, orientation=None, **kwargs):
+    spec, a, m = _start(cfg, prim_path, translation, orientation, fixed=True)
+    parts = patient_pieces()
+    a.pieces(f"{prim_path}/skin", parts["skin"], m, rough=0.55)
+    a.pieces(f"{prim_path}/drape", parts["drape"], m, rough=0.8)
+    a.pieces(f"{prim_path}/field", parts["field"], m, rough=0.9)
+    a.pieces(f"{prim_path}/marks", parts["marks"], None, rough=0.7)          # drawn only
+    return a.root
+
+
+_LAMPS: dict = {}                      # the generator's activation bars: which -> (prim path, lit now)
+
+
+def _spawn_generator(prim_path: str, cfg, translation=None, orientation=None, **kwargs):
+    spec, a, m = _start(cfg, prim_path, translation, orientation, fixed=True)
+    parts = generator_boxes()
+    for n, (lo, hi, color) in enumerate(parts["case"]):
+        a.box(f"{prim_path}/case_{n}", lo, hi, a.look(color, rough=0.5), m)
+    for n, (lo, hi, color) in enumerate(parts["panel"]):
+        a.box(f"{prim_path}/panel_{n}", lo, hi, a.look(color, rough=0.45), m)
+    for n, (lo, hi, color) in enumerate(parts["lit"]):
+        a.box(f"{prim_path}/lit_{n}", lo, hi, a.look(color, rough=0.3, glow=True))
+    for which, (lo, hi, color) in parts["lamps"].items():
+        prim = a.box(f"{prim_path}/lamp_{which}", lo, hi, a.look(color, rough=0.3, glow=True))
+        a.UsdGeom.Imageable(prim).MakeInvisible()
+        _LAMPS[which] = [str(prim.GetPath()), False]
+    return a.root
+
+
+def _spawn_lead(prim_path: str, cfg, translation=None, orientation=None, **kwargs):
+    spec, a, m = _start(cfg, prim_path, translation, orientation, fixed=True)
+    look = a.look(tuple(spec.color), rough=0.7)
+    for n, (p0, p1) in enumerate(zip(spec.path, spec.path[1:])):
+        a.rod(f"{prim_path}/run_{n}", p0, p1, spec.radius, look, m if spec.solid else None)
+    return a.root
+
+
+def set_lamp(which: str, lit: bool) -> None:
+    """Light or put out the generator's CUT or COAG activation bar (it is drawn lit only while that key's switch is
+    closed)."""
+    entry = _LAMPS.get(which)
+    if not entry or entry[1] == bool(lit):
+        return
+    from isaaclab.sim.utils.stage import get_current_stage
+    from pxr import UsdGeom
+
+    prim = get_current_stage().GetPrimAtPath(entry[0])
+    if prim and prim.IsValid():
+        shown = UsdGeom.Imageable(prim)
+        shown.MakeVisible() if lit else shown.MakeInvisible()
+        entry[1] = bool(lit)
 
 
 def _spawn_holster(prim_path: str, cfg, translation=None, orientation=None, **kwargs):
@@ -724,7 +944,7 @@ def _rigid_object(spec, spawn):
 
 
 _SPAWNERS = {Pencil: _spawn_pencil, Key: _spawn_key, Link: _spawn_link, Clip: _spawn_clip, Holster: _spawn_holster,
-             Tray: _spawn_tray}
+             Tray: _spawn_tray, Patient: _spawn_patient, Generator: _spawn_generator, Lead: _spawn_lead}
 _BOUNDS: dict = {}
 
 
@@ -739,6 +959,12 @@ def _points_of(spec) -> np.ndarray:
         return np.vstack([p for p, _ in clip_pieces()])
     if isinstance(spec, Holster):
         return np.vstack([p for p, _ in holster_pieces()])
+    if isinstance(spec, Patient):
+        return np.vstack([p for group in patient_pieces().values() for p, _ in group])
+    if isinstance(spec, Generator):
+        return np.array([[-GEN_W / 2, -GEN_D, 0.0], [GEN_W / 2, PLUG_OUT, GEN_H]])
+    if isinstance(spec, Lead):
+        return np.asarray(spec.path, float)
     return np.vstack([p for p, _ in tray_pieces()])
 
 
@@ -792,7 +1018,7 @@ def _arm(environment) -> None:
 
 
 def _local_bounds(spec) -> tuple:
-    key = (type(spec), getattr(spec, "which", ""))
+    key = (type(spec), getattr(spec, "which", ""), spec.name if isinstance(spec, Lead) else "")
     if key not in _BOUNDS:
         pts = _points_of(spec)
         _BOUNDS[key] = (pts.min(0), pts.max(0))
