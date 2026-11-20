@@ -1,8 +1,9 @@
-"""xferkit: stainless thumb dressing forceps (two sprung blades) and stainless medicine cups, for yam_arena task files.
+"""xferkit: stainless thumb dressing forceps (two sprung blades), a stainless medicine cup, a 1 mL syringe and iris
+scissors, for yam_arena task files.
 
     import pathlib, sys
     sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-    from xferkit import Blade, Cup, Forceps, on_reset, on_step
+    from xferkit import Blade, Cup, Forceps, Scissors, Syringe, on_reset, on_step
 
 Frames (every part starts with its axes along the world's unless a ``quat`` is given: x away from the robot, y left,
 z up):
@@ -13,6 +14,10 @@ z up):
 - :class:`Blade`: the other blade, same frame convention, mirrored in y. A sprung hinge about z at the tail (``tail``)
   joins the two; it holds the tips ``F_OPEN`` apart until they are squeezed.
 - :class:`Cup`: ``pos`` is the middle of the underside of its base; z is its axis.
+- :class:`Syringe`: ``pos`` is its centre of mass, on its axis; x runs along the axis from the thumb rest to the tip,
+  y along the finger flange's long side.
+- :class:`Scissors`: ``pos`` is their centre of mass; x runs from the finger rings to the points, y across the two
+  rings, z through their thickness (they lie flat with z up).
 
 All shapes are convex pieces built from point sets in NumPy when the task file is read (``*_pieces()``), so the same
 numbers serve the scene, the scoring and the offline checks. Isaac Sim is reached only when the scene is built.
@@ -35,7 +40,7 @@ from pathlib import Path
 import numpy as np
 from yam_arena.task_file import Box, ObjectState
 
-__all__ = ["Blade", "Cup", "Forceps", "KitState", "arm_points", "blade_pieces", "cup_pieces", "cup_points", "env",
+__all__ = ["Blade", "Cup", "Forceps", "KitState", "Scissors", "Syringe", "item_points", "near_item", "shank_hold", "shank_yaw", "arm_points", "blade_pieces", "cup_pieces", "cup_points", "env",
            "finger_points", "forceps_points", "in_cup", "install", "on_reset", "on_step", "place", "to_local",
            "turn_z", "write_pose"]
 
@@ -65,6 +70,31 @@ C_BEAD = 0.0012               # the rolled rim stands this far out from the wall
 C_BEAD_H = 0.002              # ... and is this tall
 C_MASS = 0.035                # an estimate (4.4 cm3 of steel)
 C_SEG = 20                    # flat pieces round the wall
+
+# -- the syringe: a 1 mL luer slip syringe without needle, plunger pushed in --------------------------------------------
+# A distributor's table for a clear polypropylene 1 mL luer slip syringe gives the barrel: OD 0.27 in, length 2 11/16 in.
+S_BARREL_R = 0.00343          # half of 0.27 in
+S_BARREL_L = 0.0683           # 2 11/16 in
+S_TIP = (0.0020, 0.010)       # the slip tip: radius, length (estimates)
+S_FLANGE = (0.0100, 0.0055, 0.0015, 0.0030)   # finger flange: half length, half height, thickness, corner cut (estimates)
+S_ROD = (0.0025, 0.011)       # the plunger rod showing behind the flange: half width (square), length (estimates)
+S_THUMB = (0.0050, 0.0020)    # the thumb rest: radius, thickness (estimates)
+S_MASS = 0.002                # an estimate (no listing gives the weight)
+S_BODY = 0.010                # the simulated body's mass: five times the real one, for the solver's sake. A steady upward
+                              # force carries the extra 8 g, so the syringe weighs what the real one does.
+PLASTIC, PLUNGER = (0.90, 0.92, 0.94), (0.82, 0.86, 0.92)
+
+# -- the scissors: straight iris scissors, 115 mm (4.5 in), stainless, closed ----------------------------------------------
+X_LEN = 0.115                 # overall (the catalogue size)
+X_WIRE = 0.0035               # the finger rings are round bar this thick (an estimate, like every size below)
+X_RING = (0.0130, 0.0110)     # a ring's outside half length (along the scissors) and half width
+X_RING_Y = 0.0128             # each ring's middle is this far from the centre line (the closed rings stand 3.6 mm apart)
+X_RING_SEG = 12               # straight pieces round each ring
+X_PIVOT_AT = 0.070            # the screw is this far from the back of the rings
+X_PIVOT = (0.0040, 0.0040)    # the joint: radius, thickness
+X_SHANK = (0.0035, 0.0030)    # each shank: width, thickness
+X_BLADE = (0.0035, 0.0006, 0.0032, 0.0016)   # closed blades: half width at the joint and at the points, thickness there
+X_MASS = 0.020                # an estimate (the shape below holds 3.0 cm3)
 
 STEEL, STEEL_DARK = (0.72, 0.73, 0.75), (0.55, 0.56, 0.58)
 FRICTION = (0.6, 0.5)         # serrated steel tips on steel, and steel on the drape (estimates)
@@ -167,6 +197,169 @@ def hull_faces(points: np.ndarray, eps: float = 1e-7) -> list:
     return faces
 
 
+def _ngon(r: float, n: int, flat: bool = True) -> np.ndarray:
+    """A regular n-gon's corners (y, z). ``flat``: ``r`` is the distance to its sides (one of which faces +y)."""
+    rr = r / math.cos(math.pi / n) if flat else r
+    a = 2 * math.pi * (np.arange(n) + (0.5 if flat else 0.0)) / n
+    return np.column_stack([rr * np.cos(a), rr * np.sin(a)])
+
+
+def _prism(x0: float, x1: float, outline) -> np.ndarray:
+    return np.array([[x, y, z] for x in (x0, x1) for y, z in outline])
+
+
+def hull_volume(points) -> tuple:
+    """Volume and centroid of the convex hull of ``points``."""
+    p = np.asarray(points, float)
+    o = p.mean(0)
+    vol, mom = 0.0, np.zeros(3)
+    for f in hull_faces(p):
+        for i in range(1, len(f) - 1):
+            a, b, c = p[f[0]] - o, p[f[i]] - o, p[f[i + 1]] - o
+            v = float(a @ np.cross(b, c)) / 6.0
+            vol += v
+            mom += v * (a + b + c) / 4.0
+    return vol, o + mom / vol
+
+
+def hull_planes(points) -> np.ndarray:
+    """The hull's faces as rows (nx, ny, nz, d): a point is outside a face by n . p - d."""
+    p = np.asarray(points, float)
+    centre = p.mean(0)
+    rows = []
+    for f in hull_faces(p):
+        q = p[f]
+        n = np.zeros(3)
+        for i in range(len(q)):                         # Newell's method: sound for any polygon
+            a, b = q[i], q[(i + 1) % len(q)]
+            n += np.cross(a, b)
+        n /= np.linalg.norm(n)
+        if n @ (q.mean(0) - centre) < 0:
+            n = -n
+        rows.append(np.r_[n, n @ q[0]])
+    return np.array(rows)
+
+
+def _centred(pieces: list) -> tuple:
+    """Shift pieces so that their centre of mass (uniform density) is the origin. Returns (pieces, volume, shift)."""
+    vols = [hull_volume(p) for p, _ in pieces]
+    total = sum(v for v, _ in vols)
+    com = sum(v * c for v, c in vols) / total
+    return [(p - com, col) for p, col in pieces], total, com
+
+
+def _syringe_raw() -> list:
+    """The syringe before centring: x from the flange's front face (0) toward the tip."""
+    fl, fh, ft, cut = S_FLANGE
+    flange = [(fl, fh - cut), (fl - cut, fh), (-fl + cut, fh), (-fl, fh - cut), (-fl, -fh + cut), (-fl + cut, -fh),
+              (fl - cut, -fh), (fl, -fh + cut)]
+    rod = [(S_ROD[0], S_ROD[0]), (-S_ROD[0], S_ROD[0]), (-S_ROD[0], -S_ROD[0]), (S_ROD[0], -S_ROD[0])]
+    back = -ft - S_ROD[1]
+    return [(_prism(0.0, S_BARREL_L, _ngon(S_BARREL_R, 12)), PLASTIC),
+            (_prism(S_BARREL_L, S_BARREL_L + S_TIP[1], _ngon(S_TIP[0], 8)), PLASTIC),
+            (_prism(-ft, 0.0, flange), PLASTIC),
+            (_prism(back, -ft, rod), PLUNGER),
+            (_prism(back - S_THUMB[1], back, _ngon(S_THUMB[0], 12)), PLUNGER)]
+
+
+def _ring_nodes(sign: float) -> list:
+    """Cross-sections round one finger ring (before centring): each an octagon of the bar, in the plane across it.
+    The ring is ``X_RING_SEG`` straight pieces of bar whose middles lie on the ring's oval; one piece is the ring's
+    back, another its front."""
+    grow = 1.0 / math.cos(math.pi / X_RING_SEG)
+    a, b = (X_RING[0] - X_WIRE / 2) * grow, (X_RING[1] - X_WIRE / 2) * grow
+    oct_ = _ngon(X_WIRE / 2, 8)
+    nodes = []
+    for k in range(X_RING_SEG):
+        t = 2 * math.pi * (k + 0.5) / X_RING_SEG
+        c = np.array([X_RING[0] - a * math.cos(t), sign * X_RING_Y + b * math.sin(t), X_WIRE / 2])
+        out = np.array([-math.cos(t) / a, math.sin(t) / b, 0.0])     # the oval's outward normal there
+        out /= np.linalg.norm(out)
+        nodes.append(np.array([c + u * grow * out + [0.0, 0.0, w] for u, w in oct_]))
+    return nodes
+
+
+def _scissors_raw() -> list:
+    """The closed scissors before centring: x from the back of the rings (0) to the points, z up from the underside."""
+    out = []
+    for sign in (1.0, -1.0):
+        nodes = _ring_nodes(sign)
+        for k in range(X_RING_SEG):
+            out.append((np.vstack([nodes[k], nodes[(k + 1) % X_RING_SEG]]), STEEL))
+        w, th = X_SHANK
+        x0, y0 = 2 * X_RING[0] - X_WIRE, sign * X_RING_Y          # the front of the ring's opening
+        pts = [[x, y + s * w / 2, z] for x, y in ((x0, y0), (X_PIVOT_AT, 0.0)) for s in (-1.0, 1.0) for z in (0.0, th)]
+        out.append((np.array(pts), STEEL))
+    r, th = X_PIVOT
+    out.append((np.array([[X_PIVOT_AT + y, z_, zz] for y, z_ in _ngon(r, 8) for zz in (0.0, th)]), STEEL_DARK))
+    w0, w1, t0, t1 = X_BLADE
+    out.append((np.array([[x, s * w, z] for x, w, t in ((X_PIVOT_AT, w0, t0), (X_LEN, w1, t1)) for s in (-1.0, 1.0)
+                          for z in (0.0, t)]), STEEL))
+    return out
+
+
+_ITEM: dict = {}
+
+
+def _item(kind: str) -> dict:
+    """Everything fixed about a kind of item ("syringe" or "scissors"), in its own (centre of mass) frame."""
+    if kind not in _ITEM:
+        pieces, vol, com = _centred({"syringe": _syringe_raw, "scissors": _scissors_raw}[kind]())
+        verts = np.vstack([p for p, _ in pieces])
+        _ITEM[kind] = {"pieces": pieces, "volume": vol, "com": com, "verts": verts,
+                       "planes": [hull_planes(p) for p, _ in pieces]}
+    return _ITEM[kind]
+
+
+def syringe_pieces() -> list:
+    return _item("syringe")["pieces"]
+
+
+def scissors_pieces() -> list:
+    return _item("scissors")["pieces"]
+
+
+def item_local(kind: str, raw) -> np.ndarray:
+    """A point given in an item's drawing frame (the syringe from its flange's front face, the scissors from the back
+    of their rings and their underside), in its own centre-of-mass frame."""
+    return np.asarray(raw, float) - _item(kind)["com"]
+
+
+def ring_back(sign: float = -1.0) -> np.ndarray:
+    """The middle of the bar at the back of one finger ring, in the scissors' own frame."""
+    return item_local("scissors", (X_WIRE / 2, sign * X_RING_Y, X_WIRE / 2))
+
+
+def shank_hold(sign: float = 1.0) -> np.ndarray:
+    """Where the scissors balance on one shank (``sign`` +1: the one on their +y side): the point of its centre line
+    nearest their centre of mass, at half its thickness, in the scissors' own frame."""
+    a, b = np.array([2 * X_RING[0] - X_WIRE, sign * X_RING_Y]), np.array([X_PIVOT_AT, 0.0])
+    c = _item("scissors")["com"][:2]
+    f = a + ((c - a) @ (b - a)) / ((b - a) @ (b - a)) * (b - a)
+    return item_local("scissors", (f[0], f[1], X_SHANK[1] / 2))
+
+
+def shank_yaw(sign: float = 1.0) -> float:
+    """How far the scissors are turned (rad about z, from pointing along x) when that shank lies along x."""
+    return sign * math.atan2(X_RING_Y, X_PIVOT_AT - (2 * X_RING[0] - X_WIRE))
+
+
+def syringe_rest() -> tuple:
+    """How the syringe lies on a level surface: (pitch nose down in rad, height of its centre of mass)."""
+    com = _item("syringe")["com"]
+    fx, fz = -S_FLANGE[2] / 2, -S_FLANGE[1]                    # the flange's lower edge
+    bx, bz = S_BARREL_L, -S_BARREL_R                           # the barrel's front rim
+    pitch = math.atan2(bz - fz, bx - fx)
+    c, s_ = math.cos(pitch), math.sin(pitch)
+    lift = lambda x, z: -(x - com[0]) * s_ + (z - com[2]) * c  # noqa: E731  height of a raw point above the centre of mass
+    return pitch, -lift(fx, fz)
+
+
+def turn_y(angle: float) -> tuple:
+    """Quaternion (xyzw) of a turn of ``angle`` rad about y (positive: the x axis dips)."""
+    return (0.0, math.sin(angle / 2), 0.0, math.cos(angle / 2))
+
+
 class _Part(Box):
     def _check(self) -> None:
         if not self.name.isidentifier():
@@ -191,6 +384,19 @@ class Blade(_Part):
 class Cup(_Part):
     quat: tuple = (0.0, 0.0, 0.0, 1.0)
     mass: float | None = C_MASS
+
+
+@dataclass(frozen=True)
+class Syringe(_Part):
+    """``mass`` is the real syringe's; the simulated body is ``S_BODY`` with the difference carried by a force."""
+    quat: tuple = (0.0, 0.0, 0.0, 1.0)
+    mass: float | None = S_MASS
+
+
+@dataclass(frozen=True)
+class Scissors(_Part):
+    quat: tuple = (0.0, 0.0, 0.0, 1.0)
+    mass: float | None = X_MASS
 
 
 @dataclass(frozen=True)
@@ -239,8 +445,8 @@ def _blade_samples(side: float, x0: float, x1: float, step: float = 0.005) -> np
     return np.array([[x, side * (bow(x) + d), s * half_width(x)] for x in xs for d in (0.0, F_TH) for s in (-1.0, 0.0, 1.0)])
 
 
-_WORK = {s: _blade_samples(s, F_LEN - WORK, F_LEN) for s in (1.0, -1.0)}
-_HANDLE = {s: _blade_samples(s, 0.0, HANDLE) for s in (1.0, -1.0)}
+_WORK = {s: _blade_samples(s, F_LEN - WORK, F_LEN, 0.001) for s in (1.0, -1.0)}
+_HANDLE = {s: _blade_samples(s, 0.0, HANDLE, 0.0025) for s in (1.0, -1.0)}
 
 
 def forceps_points(pos_a, quat_a, pos_b, quat_b) -> dict:
@@ -280,6 +486,37 @@ def cup_tilt(quat) -> float:
     return math.acos(max(-1.0, min(1.0, float(_rotation(quat)[2, 2]))))
 
 
+def item_points(kind: str, pos, quat) -> np.ndarray:
+    """World points on an item: the cup's base edge and rim, or every corner of the syringe's or scissors' pieces."""
+    if kind == "cup":
+        return cup_points(pos, quat)
+    return place(pos, quat, _item(kind)["verts"])
+
+
+def near_item(kind: str, points, pos, quat, margin: float) -> np.ndarray:
+    """For each point: is it inside the item or within ``margin`` of it? The cup counts as a solid; the syringe and
+    scissors are tested piece by piece (each piece grown by ``margin`` along its faces)."""
+    if kind == "cup":
+        return in_cup(points, pos, quat, margin)
+    loc = to_local(np.atleast_2d(points), pos, quat)
+    hit = np.zeros(len(loc), bool)
+    lo, hi = _item(kind)["verts"].min(0) - margin, _item(kind)["verts"].max(0) + margin
+    box = np.all((loc >= lo) & (loc <= hi), axis=1)
+    if not box.any():
+        return hit
+    sub = loc[box]
+    inside = np.zeros(len(sub), bool)
+    for pl in _item(kind)["planes"]:
+        inside |= np.all(sub @ pl[:, :3].T - pl[:, 3] <= margin, axis=1)
+    hit[box] = inside
+    return hit
+
+
+def item_axis_tilt(quat) -> float:
+    """Angle between an item's own z axis and upright (rad)."""
+    return cup_tilt(quat)
+
+
 # -- the arms' shapes (pure): points on each link's collision mesh, in the link's own frame ------------------------------
 
 def _stl_points(path: Path) -> np.ndarray:
@@ -316,7 +553,8 @@ def _link_points() -> dict:
             xyz = np.array([float(v) for v in o.group(1).split()])
             rot = rpy_matrix(np.array([float(v) for v in o.group(2).split()]))
             pts.append(_stl_points(root / f.group(1)) @ rot.T + xyz)
-        out[name] = _thin(np.vstack(pts)) if pts else np.zeros((0, 3))
+        cell = 0.005 if name in ("tip_left", "tip_right") else 0.012     # the fingers finely: they meet small things
+        out[name] = _thin(np.vstack(pts), cell) if pts else np.zeros((0, 3))
     return out
 
 
@@ -436,11 +674,16 @@ _SPECS: dict = {}
 _PATHS: dict = {}                      # where each kit object's prim was spawned
 
 
+def body_mass(spec) -> float:
+    """The mass the simulator gives a part's body (the syringe's is heavier than the syringe: see ``S_BODY``)."""
+    return S_BODY if isinstance(spec, Syringe) else float(spec.mass)
+
+
 def _start(cfg, prim_path, translation, orientation, iterations=None):
     spec = _SPECS[cfg.kit_name]
     _PATHS[spec.name] = prim_path
     a = _Author(prim_path, translation, orientation)
-    a.body(prim_path, float(spec.mass), iterations=iterations)
+    a.body(prim_path, body_mass(spec), iterations=iterations)
     return spec, a, a.mat("part", *FRICTION)
 
 
@@ -459,6 +702,18 @@ def _spawn_blade(prim_path: str, cfg, translation=None, orientation=None, **kwar
 def _spawn_cup(prim_path: str, cfg, translation=None, orientation=None, **kwargs):
     spec, a, m = _start(cfg, prim_path, translation, orientation, iterations=32)
     a.pieces(f"{prim_path}/p", cup_pieces(), m)
+    return a.root
+
+
+def _spawn_syringe(prim_path: str, cfg, translation=None, orientation=None, **kwargs):
+    spec, a, m = _start(cfg, prim_path, translation, orientation, iterations=32)
+    a.pieces(f"{prim_path}/p", syringe_pieces(), m, rough=0.5, metal=0.0)
+    return a.root
+
+
+def _spawn_scissors(prim_path: str, cfg, translation=None, orientation=None, **kwargs):
+    spec, a, m = _start(cfg, prim_path, translation, orientation, iterations=32)
+    a.pieces(f"{prim_path}/p", scissors_pieces(), m)
     return a.root
 
 
@@ -522,8 +777,10 @@ def _rigid_object(spec, spawn):
                   initial_pose=Pose(position_xyz=tuple(float(v) for v in spec.pos), rotation_xyzw=quat))
 
 
-_SPAWNERS = {Forceps: _spawn_forceps, Blade: _spawn_blade, Cup: _spawn_cup}
-_PIECES = {Forceps: lambda: blade_pieces(1.0), Blade: lambda: blade_pieces(-1.0), Cup: cup_pieces}
+_SPAWNERS = {Forceps: _spawn_forceps, Blade: _spawn_blade, Cup: _spawn_cup, Syringe: _spawn_syringe,
+             Scissors: _spawn_scissors}
+_PIECES = {Forceps: lambda: blade_pieces(1.0), Blade: lambda: blade_pieces(-1.0), Cup: cup_pieces,
+           Syringe: syringe_pieces, Scissors: scissors_pieces}
 _BOUNDS: dict = {}
 
 
@@ -574,6 +831,22 @@ def _arm(environment) -> None:
     """Join each pair of blades as the reset left them."""
     for a, b in _pairs():
         _author(a, b)
+
+
+def _carry(environment) -> None:
+    """Hold on every part whose body is heavier than the part the upward force that carries the difference."""
+    import torch
+
+    for n, spec in _SPECS.items():
+        extra = (body_mass(spec) - float(spec.mass)) * 9.81
+        if n not in _PATHS or extra <= 0.0:
+            continue
+        try:
+            asset = environment.unwrapped.scene[n]
+            ft = torch.tensor([[[0.0, 0.0, float(extra)]]], dtype=torch.float32, device=asset.device)
+            asset.permanent_wrench_composer.set_forces_and_torques_index(forces=ft, torques=torch.zeros_like(ft), is_global=True)
+        except Exception as err:                     # noqa: BLE001
+            print(f"[xferkit] weight not carried for {n}: {err!r}", file=sys.stderr, flush=True)
 
 
 def _local_bounds(spec) -> tuple:
@@ -699,6 +972,7 @@ def _patch_embodiment(module) -> None:
                 _disarm()
                 result = env_reset(*aa, **kk)
                 _arm(self._env)
+                _carry(self._env)
                 return result
 
             base.reset = reset_then_arm
@@ -714,6 +988,7 @@ def _patch_embodiment(module) -> None:
                 else:
                     del base.reset
         _ENV["env"] = self._env
+        _carry(self._env)
         for fn in _RESET:
             fn(self._env)
         return obs
