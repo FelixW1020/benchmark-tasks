@@ -140,10 +140,18 @@ of the run; the clog was nudged but never lifted, and the leg was never touched.
 
 ## Building it for real
 
-- **Manikin.** A toddler-size (about 80 cm) vinyl care or first-aid training manikin, or a jointed doll of that size,
-  whose knee swings freely and whose ankle is stiff. Foot 13 cm long and 5.4 cm wide. Sit it at the front of a
-  child's chair with a 26 cm seat and hold its trunk to the chair's back with a belt; the feet then hang about
-  7.5 cm above the floor.
+- **Manikin.** A one-year-old pediatric care simulator with jointed knees: the Gaumard S110 "Mike and Michelle".
+  Distributors' listings give it as 32 in (81 cm) long with "jointed elbows and knees", a waist that bends, and a
+  "soft upper body skin over hard upper body". Sit it at the front of a child's chair with a 26 cm seat and hold its
+  trunk to the chair's back with a belt; the feet then hang about 7.5 cm above the floor.
+  - The listings give no leg or foot sizes. The sizes used here (knee to ankle 19 cm, ankle to sole 3.5 cm, foot
+    13 cm long and 5.4 cm wide, lower leg 350 g) are estimates for a manikin of that length, not measurements of
+    that model. Measure the manikin first. If its foot is not 13 cm long, use the clog size whose size chart matches
+    the foot and scale the toe limits in step 3 of "Scoring a real trial" by the same difference.
+  - The lower leg has to swing freely at the knee, as it does here. Whether that model's knee is this loose out of
+    the box has not been checked; slacken the joint if it holds a pose.
+  - One listing also calls the ankles jointed. The ankle here is rigid at a right angle: tape the manikin's ankle
+    if it moves.
 - **Clogs.** A pair of toddler size 6 foam clogs with pivoting heel straps (size charts give a 13.2 cm foot for
   that size). One goes on the left foot; the other stands on its mark with its strap back.
 - **Floor.** The table, or a mat on the real floor with the arms mounted at its edge.
