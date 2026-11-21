@@ -94,7 +94,7 @@ def test_attitude():
 def test_good_stick_reaches_the_vein():
     s = push(25.0, to=K.VEIN_DEPTH / math.sin(math.radians(25)))
     assert s.state == "in" and s.good and s.sticks == 1 and s.reached and s.held and s.kept and s.in_vein
-    assert not s.through and not s.swept
+    assert not s.through
     assert abs(s.entry_angle - 25) < 0.01 and np.linalg.norm(s.entry - SKIN) < 0.0005
     assert abs(s.depth - K.VEIN_DEPTH) < 0.0002
 
@@ -163,14 +163,58 @@ def test_missing_the_vein_to_one_side():
     assert s.in_vein
 
 
-def test_sweeping_in_the_skin():
-    s = push(25.0, to=0.0083)
-    n, up = line(25.0)
-    tip = SKIN + n * 0.0083
-    s.step(tip + (0.0015, 0.0, 0.0), n, up, True)
-    assert not s.swept
-    s.step(tip + (0.0030, 0.0, 0.0), n, up, True)
-    assert s.swept
+def test_what_the_needle_meets():
+    n, _ = line(25.0)
+    along = lambda depth: SKIN + n * (depth / math.sin(math.radians(25.0)))          # noqa: E731
+    assert K.resistance(along(-0.0002)) == K.F_SKIN == 1.0                  # on the skin
+    assert K.resistance(along(0.0008)) == K.F_SKIN                          # in the skin, not through it
+    assert K.resistance(along(0.0012)) == K.F_SHAFT == 0.10                 # through the skin, short of the vein
+    assert K.resistance(along(0.0015)) == K.F_WALL == 0.40                  # the vein's near wall
+    assert K.resistance(along(0.0035)) == K.F_SHAFT                         # in the lumen
+    assert K.resistance(along(0.0055)) == K.F_WALL                          # the far wall
+    assert K.resistance(along(0.0070)) == K.F_SHAFT                         # beyond it
+    assert K.resistance(along(0.0015), vein_x=0.005) == K.F_SHAFT           # the vein has rolled aside: no wall here
+    assert K.F_SKIN > K.F_WALL > K.F_SHAFT > 0
+
+
+def test_where_the_line_meets_the_skin():
+    n, _ = line(25.0)
+    for d in (-0.004, -0.0003, 0.003):
+        p = K.skin_cross(SKIN + n * d, n)
+        assert np.allclose(p, SKIN, atol=1e-9), (d, p)
+    off = K.skin_cross(SKIN + (0.006, 0.0, 0.0) + n * -0.002, n)
+    assert abs(math.hypot(off[0], off[2] - K.ELBOW_R) - K.ELBOW_R) < 1e-9 and abs(off[0] - 0.006) < 1e-9
+    assert K.skin_cross((0.2, 0.0, 0.3), (0.0, 1.0, 0.0)) is None           # a line that misses the arm
+
+
+def test_skin_patch():
+    d = K.patch_axis()
+    assert abs(np.linalg.norm(d) - 1.0) < 1e-12 and d[0] == 0.0 and d[1] < -0.99 and d[2] < 0       # toward the wrist, a little down
+    solid = [pts for pts, _, ok in K.patch_pieces() if ok]
+    assert len(solid) == K.PATCH_SEG
+    pts = np.vstack(solid)
+    assert abs(pts[:, 1].min() - K.PATCH_Y[0]) < 1e-9 and abs(pts[:, 1].max() - K.PATCH_Y[1]) < 1e-9
+    assert K.PATCH_Y[1] < -0.06                                            # all of it on the forearm, below the elbow piece
+    # it stands 2.3 mm proud of the arm's core on the vein's line (its wedges reach down into the arm, unseen)
+    top = max(p[2] for p in pts if abs(p[1] - K.PATCH_Y[1]) < 1e-9)
+    assert abs(top - (K.fore_top(K.PATCH_Y[1]) + K.PATCH_GAP + K.PATCH_T)) < 2e-4
+    # traction is read along the forearm, toward the wrist
+    arm = np.array([0.25, 0.06, 0.10])
+    assert abs(K.traction(arm + 0.007 * d, arm) - 0.007) < 1e-12
+    assert K.traction(arm - 0.001 * d, arm) < 0 and K.traction(arm + (0.004, 0.0, 0.0), arm) == 0.0
+    assert 0 < K.TRACTION < K.TRACTION_MAX and K.SKIN_K * K.TRACTION < 1.0   # 0.75 N holds the skin drawn 5 mm
+
+
+def test_still_is_read_from_the_holders_back_end():
+    n, _ = line(25.0)
+    back = np.array([0.0, -0.07, 0.11])
+    same = [back] * T.STILL_STEPS
+    assert T.still_from(same, [n] * T.STILL_STEPS)
+    assert not T.still_from(same[:-1], [n] * (T.STILL_STEPS - 1))                       # not yet a second
+    assert not T.still_from([back + (0.0, 0.0012, 0.0)] + same[1:], [n] * T.STILL_STEPS)   # moved 1.2 mm
+    assert T.still_from([back + (0.0, 0.0008, 0.0)] + same[1:], [n] * T.STILL_STEPS)       # 0.8 mm is still
+    n3, _ = line(28.0)
+    assert not T.still_from(same, [n3] + [n] * (T.STILL_STEPS - 1))                     # turned 3 degrees
 
 
 def test_drawing_out_and_a_second_stick():
@@ -183,14 +227,15 @@ def test_drawing_out_and_a_second_stick():
     assert s.state == "in" and s.sticks == 2 and s.in_vein
 
 
-def test_anchoring_window():
-    y = -0.110
-    on = [0.0, y, K.fore_top(y) + 0.001]
-    assert K.anchored([on])
-    assert not K.anchored([[0.0, y, K.fore_top(y) + 0.004]])        # 4 mm off the skin
-    assert not K.anchored([[0.025, y, K.fore_top(y)]])              # 2.5 cm from the vein's line
-    assert not K.anchored([[0.0, -0.070, K.fore_top(-0.070) + 0.001]]) and not K.anchored([[0.0, -0.150, K.fore_top(-0.150) + 0.001]])
-    assert not K.anchored([[0.0, 0.030, K.SKIN_H + 0.001]])         # above the site does not count
+def test_holding_the_vein_is_drawing_the_skin():
+    # the vein counts as held only while the skin below the site is drawn 5 mm or more toward the wrist
+    n, up = line(25.0)
+    arm = np.zeros(3)
+    for drawn_mm, held in ((0.0, False), (4.0, False), (5.0, True), (9.0, True)):
+        drawn = K.traction(arm + drawn_mm / 1000 * K.patch_axis(), arm) >= K.TRACTION
+        assert drawn is held, drawn_mm
+        s = push(25.0, to=0.0083, held=drawn)
+        assert s.in_vein is held, drawn_mm
 
 
 # -- the scoring rule ------------------------------------------------------------------------------------------------
@@ -216,11 +261,15 @@ def test_text_matches_code():
     doc = json.loads((HERE / "task.json").read_text())
     assert doc["instruction"] == T.INSTRUCTION
     s = doc["scoring"]
-    for phrase in ("8 mm", "12 mm", "10 to 30 degrees", "30 degrees", "4 mm", "3.5 mm", "8 to 14 cm", "2 cm", "0.5 mm",
-                   "5 to 30 degrees", "15 mm", "1.5 mm", "2 mm", "0.25", "0.5", "0.75", "1.0"):
+    for phrase in ("8 mm", "12 mm", "10 to 30 degrees", "30 degrees", "4 mm", "3.5 mm", "5 mm", "1 mm", "2 degrees",
+                   "5 to 30 degrees", "15 mm", "1.5 mm", "0.25", "0.5", "0.75", "1.0"):
         assert phrase in s, phrase
-    assert (K.SITE_X, K.SITE_Y, K.ANGLE, K.BEVEL, K.VEIN_R, K.VEIN_DEPTH, K.ANCHOR_Y, K.ANCHOR_X, K.SWEEP, K.IN_SKIN) == \
-        (0.008, 0.012, (10.0, 30.0), 30.0, 0.002, 0.0035, (-0.140, -0.080), 0.020, 0.002, 0.001)
-    assert (T.STILL, T.STILL_STEPS, T.ANGLE_END, T.STICK, T.TOUCH) == (0.0005, 20, (5.0, 30.0), 0.015, 0.0015)
+    assert (K.SITE_X, K.SITE_Y, K.ANGLE, K.BEVEL, K.VEIN_R, K.VEIN_DEPTH, K.TRACTION, K.IN_SKIN) == \
+        (0.008, 0.012, (10.0, 30.0), 30.0, 0.002, 0.0035, 0.005, 0.001)
+    assert (T.STILL, T.STILL_DEG, T.STILL_STEPS, T.ANGLE_END, T.STICK, T.TOUCH) == (0.001, 2.0, 20, (5.0, 30.0), 0.015, 0.0015)
+    f = doc["fidelity"]
+    assert (K.F_SKIN, K.F_SHAFT, K.F_WALL) == (1.0, 0.10, 0.40) and all(t in f for t in ("1 N", "0.1 N", "0.4 N"))
+    assert K.SKIN_K == 80.0 and "0.8 N per cm" in doc["setup"] and abs(K.TRACTION_MAX - 0.015) < 1e-12 and "15 mm" in doc["setup"]
+    assert "800 steps" in doc["run_limit"]
     assert len(doc["fidelity"]) <= 500 and len(doc["title"]) <= 120 and len(doc["context"]) <= 1000
     assert len(doc["scores"]) <= 300

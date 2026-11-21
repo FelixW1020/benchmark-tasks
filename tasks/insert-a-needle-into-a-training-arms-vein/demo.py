@@ -1,23 +1,25 @@
 """Demo for the needle-stick task, run in the yam_arena embodiment.
 
-    python demo.py task.py out_dir [--window] [--max-steps 700] [--no-record]
-                   [--mode full|noanchor|release|steep|through|still]
+    python demo.py task.py out_dir [--window] [--max-steps 800] [--no-record]
+                   [--mode full|notraction|release|letgo|steep|through|still]
 
-1. The right hand, closed and leaning 45 degrees toward the wrist, goes to the forearm 13 cm below the elbow crease
-   and presses its fingertips on the skin over the vein: the vein is held.
+1. The right hand, closed and leaning 45 degrees toward the wrist, presses its fingertips on the forearm's skin
+   11 cm below the elbow crease and draws it toward the wrist until the hand itself has moved 9 mm (the skin ends
+   about 8 mm drawn): the vein is held. It stays there.
 2. Meanwhile the left hand, pointing straight down, takes the tube holder out of its cradle across the barrel, lifts
    it, carries it over to the arm and tips it until the needle points up the arm, 25 degrees below level, bevel up.
-3. The left hand brings the needle's tip to 2 cm short of the skin on the needle's own line, then goes in along that
-   line, 9.5 mm of needle (it ends with its tip about 3 mm under the skin), and stays still.
+3. The left hand brings the needle's tip to 2 cm short of the skin on the needle's own line and goes forward slowly
+   until it stops moving: the point is on the skin. It keeps pushing until the skin gives (it feels its own hand move
+   on), eases off at once, goes on a set distance from where the skin was, and then leaves its command alone.
 
-Controls: ``--mode noanchor`` leaves the right hand at rest; ``--mode release`` takes the right hand off the forearm
-once the needle is in the vein; ``--mode steep`` goes in at 45 degrees; ``--mode through`` goes on to 18 mm of needle;
-``--mode still`` keeps both arms still. With ``VEIN_BEVEL=down`` the holder starts turned over in its cradle, so the
-same moves put the needle in bevel down.
+Controls: ``--mode notraction`` presses the skin but does not draw it; ``--mode release`` lets the skin go once the
+needle is in the vein; ``--mode letgo`` lets go of the holder once the needle is in the vein; ``--mode steep`` goes in
+at 45 degrees; ``--mode through`` goes on to 18 mm of needle; ``--mode still`` keeps both arms still. With
+``VEIN_BEVEL=down`` the holder starts turned over in its cradle, so the same moves put the needle in bevel down.
 
 Every target comes from the layout constants in the task file and the sizes in ``veinkit.py``. The only feedback is
-each hand's own measured position (the robot's proprioception), used to correct for the arm's sag. The demo never
-reads a part's state.
+each hand's own measured position (the robot's proprioception): to correct for the arm's sag, to find the skin (the
+hand stops) and to tell when the skin has given (the hand moves on). The demo never reads a part's state.
 """
 from __future__ import annotations
 
@@ -157,9 +159,14 @@ GRIP_AT = (0.001, 0.004)                 # the tool point on the holder: forward
 OPEN, SQUEEZE = 0.040, 0.013             # the pads' gap over the 19 mm barrel: open, and commanded when holding it
 ANGLE = 25.0                             # degrees below level the needle goes in at
 SHORT = 0.020                            # the tip waits this far short of the skin, on the needle's line
-AIM = 0.0040                             # the tip is sent this far under the skin (it ends about 1 mm short of that)
-BELOW = 0.130                            # the anchoring fingertips press this far below the crease
-PRESS = 0.003                            # ... sent this far into the skin
+AIM = 0.0038                             # how far under the skin the tip is to end
+BELOW = 0.110                            # the anchoring fingertips press this far below the crease
+PRESS = 0.016                            # ... sent this far into the skin, to press on it
+DRAW = 0.009                             # ... and then draw the skin this far toward the wrist (by the hand's own measure)
+DRAW_LEAD = 0.035                        # the most the command leads the hand while it draws
+APPROACH, CREEP = 0.00025, 0.00015       # m per control step: toward the skin, and on through the tissue
+STALL = 0.004                            # the hand is this far behind its command and not moving: it is on the skin
+LEAD_SKIN, LEAD_IN = 0.030, 0.008        # the most the command leads the hand: to pierce the skin, and once through
 GAIN, BIAS_MAX = 0.25, 0.020             # how fast, and how far, a hand corrects for its own sag
 
 
@@ -218,17 +225,73 @@ def go_home(hand, seconds: float = 2.5):
 
 
 def anchor_point(T) -> np.ndarray:
-    """The right hand's tool point with its closed fingertips pressed on the forearm over the vein."""
+    """The right hand's tool point with its closed fingertips pressed on the forearm's skin over the vein."""
     K = T.K
-    skin = T.arm_pos() + (0.0, -BELOW, K.fore_top(-BELOW))
+    skin = T.arm_pos() + (0.0, -BELOW, K.fore_top(-BELOW) + K.PATCH_GAP + K.PATCH_T)
     return skin - R_ANCHOR[:, 2] * (0.013 - PRESS)
 
 
-def anchor(T, right):
+def anchor(T, right, draw: bool = True):
+    """Press on the skin below the site and (unless ``draw`` is False) draw it toward the wrist."""
     p = anchor_point(T)
     yield from right.move(p + (0.0, -0.040, 0.090), 2.5, rot=R_ANCHOR, grip=0.0)
     yield from right.move(p + (0.0, 0.0, 0.030), 1.2, rot=R_ANCHOR)
     yield from right.move(p, 1.0, rot=R_ANCHOR)
+    if draw:                             # toward the wrist until the hand itself has moved DRAW, then hold that command
+        d, start, lead = T.K.patch_axis(), TOOL["right"].copy(), 0.0
+        for _ in range(160):
+            moved = float((TOOL["right"] - start) @ d)
+            if moved >= DRAW:
+                break
+            lead = min(lead + 0.0005, moved + DRAW_LEAD)
+            right._solve(p + lead * d, R_ANCHOR)
+            yield
+
+
+def push_in(T, left, bias, rot, deg: float, goal: float, note: dict):
+    """Generator: the stick. The hand is commanded along the needle's line; ``a`` is how far its own measured tool
+    point has gone along that line (0 where the layout puts the skin). It goes forward until it stalls (the point is
+    on the skin, at ``a0``), pushes until it has moved on past the skin's thickness (the skin has given), eases off,
+    goes on to ``goal`` past ``a0``, then sets its command to where it is and stops."""
+    K = T.K
+    n = rot[:, 1]
+    skin = T.arm_pos() + (0.0, 0.0, K.SKIN_H)
+    base = tool_for_tip(T, skin, rot)
+    meas = lambda: float((TOOL["left"] - base) @ n)                     # noqa: E731
+    cmd = lambda a: left._solve(base + a * n + bias, rot)               # noqa: E731
+    a_cmd, hist, a0 = -SHORT, [], None
+    for _ in range(600):                                 # 1: forward until the hand stalls on the skin
+        a = meas()
+        hist = (hist + [a])[-5:]
+        if len(hist) == 5 and a_cmd - a > STALL and hist[-1] - hist[0] < 0.0004:
+            a0 = a
+            break
+        a_cmd = min(a_cmd + APPROACH, a + LEAD_SKIN)
+        cmd(a_cmd)
+        yield
+    if a0 is None:
+        return
+    pierce = K.IN_SKIN / math.sin(math.radians(deg))     # the skin's thickness along the needle
+    for _ in range(400):                                 # 2: push until the skin gives
+        a = meas()
+        if a - a0 >= pierce + 0.0005:
+            break
+        a_cmd = min(a_cmd + APPROACH, a + LEAD_SKIN)
+        cmd(a_cmd)
+        yield
+    a_cmd = meas() + 0.001                               # ease off at once
+    cmd(a_cmd)
+    yield
+    for _ in range(600):                                 # 3: on to the set distance past the skin
+        a = meas()
+        if a - a0 >= goal - 0.0003:
+            break
+        a_cmd = min(a_cmd + CREEP, a + LEAD_IN)
+        cmd(a_cmd)
+        yield
+    cmd(meas())                                          # 4: the command goes to where the hand is, and stays
+    note.update(a0_mm=round(1000 * a0, 2), end_mm=round(1000 * meas(), 2))
+    yield
 
 
 def take(T, left):
@@ -256,25 +319,27 @@ def script(T, left, right, mode: str = "full", idle_s: float = 30.0):
     rot = stick_frame(deg)
     n = rot[:, 1]
     skin = T.arm_pos() + (0.0, 0.0, K.SKIN_H)                 # where the needle is to cross the skin
-    deep = (0.018 if mode == "through" else AIM / math.sin(math.radians(deg)))
-    if mode == "noanchor":
-        yield from take(T, left)
-    else:
-        yield from together(take(T, left), anchor(T, right))
+    goal = (0.018 if mode == "through" else AIM / math.sin(math.radians(deg)))
+    yield from together(take(T, left), anchor(T, right, draw=mode != "notraction"))
     # over to the arm, high, turning the needle down the arm; then down to 2 cm short of the skin on the needle's line
     yield from left.move(tool_for_tip(T, skin - 0.035 * n + (0.0, 0.0, 0.050), rot), 3.0, rot=rot)
     ls = Sag(left)
     yield from glide(ls, tool_for_tip(T, skin - 0.035 * n + (0.0, 0.0, 0.050), rot), 0.3, rot)
     yield from glide(ls, tool_for_tip(T, skin - SHORT * n, rot), 2.0, rot)
     yield from settle(ls, 0.8, rot)
-    yield from glide(ls, tool_for_tip(T, skin + deep * n, rot), 3.0, rot)    # in along the needle's line
-    if mode == "release":                # control: the vein is let go as soon as the needle is in it
+    yield from push_in(T, left, ls.bias.copy(), rot, deg, goal, NOTE)        # in along the needle's line, by feel
+    yield from wait(0.5)
+    if mode == "release":                # control: the skin is let go as soon as the needle is in the vein
         p = anchor_point(T)
-        yield from together(right.move(p + (0.0, -0.040, 0.090), 1.0, rot=R_ANCHOR), settle(ls, 0.6, rot))
-    else:
-        yield from settle(ls, 0.6, rot)
+        yield from right.move(p + (0.0, -0.040, 0.090), 1.0, rot=R_ANCHOR)
+    elif mode == "letgo":                # control: the holder is let go once the needle is in the vein
+        yield from left.set_grip(gap(OPEN), 0.6)
+        yield from left.move(left.pos + (0.0, 0.0, 0.060), 1.2, rot=rot)
     # from here the left hand's command is left alone, so that the needle stays still
     yield from wait(idle_s)
+
+
+NOTE: dict = {}                          # what the stick felt (for the log)
 
 
 def _write_mp4(frames, path: Path) -> None:
@@ -286,7 +351,7 @@ def _write_mp4(frames, path: Path) -> None:
             w.append_data(f)
 
 
-def run(task_path: str, out_dir: str, max_steps: int = 700, record: bool = True, window: bool = False,
+def run(task_path: str, out_dir: str, max_steps: int = 800, record: bool = True, window: bool = False,
         hold_s: float = 2.5, mode: str = "full", every: int = 5, cam: tuple = (320, 176), top_cam: str | None = None) -> dict:
     from inspect_robots import Scene
     from inspect_robots.types import Action
@@ -305,7 +370,7 @@ def run(task_path: str, out_dir: str, max_steps: int = 700, record: bool = True,
     gen = script(T, left, right, mode, idle_s=max_steps / CONTROL_HZ)
     frames: dict[str, list] = {}
     trace = []
-    names = [T.HOLDER]
+    names = [T.HOLDER, T.PATCH]
 
     def snap_frames(o) -> None:
         if record:
@@ -368,7 +433,8 @@ def run(task_path: str, out_dir: str, max_steps: int = 700, record: bool = True,
     result = {"lot": T.LOT, "mode": mode, "task_score": 1.0 if success else float(info.get("score", 0.0) or 0.0),
               "success": success, "steps": steps, "script_steps": ended,
               "worst_ik": {h.name: {"mm": round(h.worst_mm, 2), "deg": round(h.worst_deg, 2)} for h in (left, right)},
-              "start": start, "end": {"task": T.report(states()), "places": places(states())}, "trace": trace}
+              "start": start, "end": {"task": T.report(states()), "places": places(states())}, "felt": dict(NOTE),
+              "trace": trace}
     if record:
         import imageio
 
@@ -386,10 +452,10 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("task")
     ap.add_argument("out")
-    ap.add_argument("--max-steps", type=int, default=700)
+    ap.add_argument("--max-steps", type=int, default=800)
     ap.add_argument("--window", action="store_true", help="show the Isaac Sim window on the instance's desktop")
     ap.add_argument("--no-record", action="store_true")
-    ap.add_argument("--mode", default="full", choices=("full", "noanchor", "release", "steep", "through", "still"))
+    ap.add_argument("--mode", default="full", choices=("full", "notraction", "release", "letgo", "steep", "through", "still"))
     ap.add_argument("--trace-every", type=int, default=5, help="steps between entries of the trace in result.json")
     ap.add_argument("--cam", default="320x176", help="recorded frame size, e.g. 640x352")
     ap.add_argument("--top-cam", default=None, choices=("calibrated", "demo"), help="the station's overhead camera setting")

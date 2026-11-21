@@ -3,7 +3,7 @@ the holder lies in, for yam_arena task files.
 
     import pathlib, sys
     sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-    from veinkit import Cradle, Holder, Stick, TrainArm, on_reset, on_step
+    from veinkit import Cradle, Holder, SkinPatch, Stick, TrainArm, on_reset, on_step
 
 Frames (every part starts with its axes along the world's: x away from the robot, y left, z up).
 
@@ -14,10 +14,16 @@ Frames (every part starts with its axes along the world's: x away from the robot
 - :class:`Cradle`: a fixed block with a V groove in which the holder lies level. ``pos`` is the point on the table
   under the middle of the barrel.
 
-The needle is drawn but has no collider: a 0.8 mm shaft cannot be simulated as a body here, and the skin does not
-resist it. What the needle does is worked out from where its tip and shaft are, by :class:`Stick` (pure Python): where
-it crosses the skin, at what angle and with which side up, how deep the tip is, whether the vein was held, whether the
-tip is in the vein or has gone through it.
+The needle's 0.8 mm shaft is drawn, not a collider. What resists it is a joint the kit makes between the holder and
+the arm at the moment the needle's point reaches the skin (:func:`engage`): the needle then slides on its own line
+against a force the solver applies every physics step (a damper that tops out at the tissue's resistance: 1 N until the
+skin is pierced, 0.1 N of shaft friction after, 0.4 N at a vein wall), and springs hold it to that line. Where the
+needle crossed the skin, at what angle and with which side up, how deep its tip is, whether the vein was held and
+whether the tip is in the vein or through it, are read from its pose by :class:`Stick` (pure Python).
+
+- :class:`SkinPatch`: the forearm's skin below the site, a loose curved shell on a slide along the arm with a spring
+  return. A fingertip pressed on it draws it toward the wrist by friction: that is the skin traction that holds the
+  vein. ``pos`` is the training arm's own origin.
 
 All shapes are convex pieces built from point sets in NumPy when the task file is read (``*_pieces()``), so the same
 numbers serve the scene, the scoring and the offline checks. Isaac Sim is reached only when the scene is built.
@@ -37,9 +43,10 @@ from dataclasses import dataclass, field
 import numpy as np
 from yam_arena.task_file import Box, ObjectState
 
-__all__ = ["Cradle", "Holder", "KitState", "Stick", "TrainArm", "arm_distance", "arm_pieces", "cradle_pieces", "env",
-           "finger_points", "gripper_points", "holder_pieces", "install", "needle", "on_reset", "on_step", "place",
-           "skin_top", "to_local", "write_pose"]
+__all__ = ["Cradle", "Holder", "KitState", "SkinPatch", "Stick", "TrainArm", "arm_distance", "arm_pieces", "cradle_pieces",
+           "engage", "engaged", "env", "finger_points", "gripper_points", "holder_pieces", "install", "needle", "on_reset",
+           "on_step", "patch_pieces", "place", "release", "resistance", "set_resistance", "skin_cross", "skin_top",
+           "to_local", "traction", "write_pose"]
 
 # -- the training arm (m), in its own frame: origin on the table under the middle of the elbow crease, y toward the
 # -- shoulder, z up. Every size here is an estimate of an adult arm (the listing gives only the case's size). -------------
@@ -59,12 +66,23 @@ VEIN_DEPTH = 0.0035              # the middle of the vein under the skin (an est
 VEIN_Y = (-0.200, 0.200)         # the vein runs this far along the arm
 VEIN_ROLL = 0.005                # an unheld vein moves this far aside when the needle reaches it (an estimate)
 
-# -- the site and the anchoring window, in the arm's frame --------------------------------------------------------------
+# -- the site, and the skin patch below it that is drawn toward the wrist (the arm's frame) -----------------------------
 SITE_X = 0.008                   # the needle has to cross the skin within this of the vein's line ...
 SITE_Y = 0.012                   # ... and within this of the crease
-ANCHOR_Y = (-0.140, -0.080)      # the anchoring fingertip: this far below (toward the hand from) the crease ...
-ANCHOR_X = 0.020                 # ... and within this of the vein's line
-ANCHOR_TOUCH = 0.0025            # on the skin: within this of it
+PATCH_Y = (-0.150, -0.080)       # the patch of skin: this far below (toward the hand from) the crease ...
+PATCH_ARC = math.radians(40.0)   # ... and this far round the forearm either side of the vein's line
+PATCH_T = 0.002                  # its thickness (an estimate of a training arm's skin)
+PATCH_GAP = 0.0003               # it rides this far clear of the arm's core
+PATCH_ROOT = 0.010               # its collider reaches this far down into the arm (a 2 mm shell alone will not cook)
+PATCH_MASS = 0.020               # (an estimate)
+PATCH_SEG = 4                    # flat pieces round it
+SKIN_K = 80.0                    # N/m: the skin's pull back to where it lies (an estimate: 0.8 N at 1 cm)
+SKIN_C = 2.5                     # N s/m: it comes back without swinging
+TRACTION = 0.005                 # the vein is held while the skin is drawn at least this far toward the wrist
+TRACTION_MAX = 0.015             # the skin will not go further than this
+MARK_Y = -0.100                  # the ink line across the patch, and the reference ticks on the arm beside it
+PATCH_SKIN = (0.90, 0.72, 0.60)
+INK = (0.10, 0.10, 0.12)
 
 # -- the holder and needle (m), in the holder's frame: origin at the middle of the barrel, y toward the needle's tip ------
 BARREL_R = 0.0095                # 19 mm across (an estimate of a single-use holder for 13 and 16 mm tubes)
@@ -96,8 +114,17 @@ FRICTION = (0.8, 0.7)            # vinyl skin and the cradle against the gripper
 # -- the needle's rule (m, degrees) -------------------------------------------------------------------------------------
 ANGLE = (10.0, 30.0)             # the needle's angle to the skin where it goes in
 BEVEL = 30.0                     # the bevel faces away from the skin within this
-IN_SKIN = 0.001                  # the needle is in the skin once its tip is this far under it
-SWEEP = 0.002                    # the shaft may not move sideways in the skin by more than this
+IN_SKIN = 0.001                  # the skin is pierced once the tip is this far under it (its thickness, an estimate)
+
+# -- what the needle meets (N, m): forces the solver applies through the needle's joint ---------------------------------
+F_SKIN = 1.0                     # to pierce the skin: the peak for 21 G needles in the DIN 13097-4 foil test (0.80-1.56)
+F_SHAFT = 0.10                   # shaft friction once through (the same tests: 0.06 to 0.17)
+F_WALL = 0.40                    # to pierce a wall of the vein (an estimate)
+WALL_HALF = 0.00025              # a wall is felt within this of the lumen's edge
+ENGAGE = 0.0002                  # the needle's point catches the skin this far above it
+RESIST_C = 5000.0                # N s/m: the damper that tops out at those forces (under them the needle creeps 0.2 mm/s per N)
+LINE_K, LINE_C = 400.0, 6.0      # N/m, N s/m: the tissue holds the tip to the line it went in on (estimates)
+SWING_K, SWING_C = 1.0, 0.01     # N m/rad, N m s/rad: ... and the shaft to its direction (estimates)
 PALM_BACK = 0.065
 FINGER_THICK = 0.012
 
@@ -153,6 +180,35 @@ def arm_pieces() -> list:
         ya, yb = max(ya, VEIN_Y[0]), min(yb, VEIN_Y[1])
         pts = [[sx * w, y, z - 0.0002 + dz] for (y, z) in ((ya, za), (yb, zb)) for sx in (-1, 1) for dz in (0.0, t)]
         out.append((np.array(pts), VEIN_BLUE, False))
+    # two ink ticks on the arm beside the skin patch: the fixed reference line for reading traction
+    r = fore_top(MARK_Y) / 2
+    for sx in (-1.0, 1.0):
+        a0, a1 = PATCH_ARC + math.radians(4.0), PATCH_ARC + math.radians(16.0)
+        pts = [[sx * rad * math.sin(a), MARK_Y + dy, r + rad * math.cos(a)] for a in (a0, a1) for rad in (r - 0.0002, r + 0.0006)
+               for dy in (-0.001, 0.001)]
+        out.append((np.array(pts), INK, False))
+    return out
+
+
+def patch_axis() -> np.ndarray:
+    """The way the skin patch slides when it is drawn toward the wrist: along the forearm's top line (unit, arm frame)."""
+    d = np.array([0.0, PATCH_Y[0] - PATCH_Y[1], fore_top(PATCH_Y[0]) - fore_top(PATCH_Y[1])])
+    return d / np.linalg.norm(d)
+
+
+def patch_pieces() -> list:
+    """The skin patch: (points, colour, solid) pieces in the ARM's frame (the patch's origin is the arm's): a curved
+    shell over the forearm's top, in flat pieces, with an ink line drawn across it. Each piece is a wedge that reaches
+    1 cm down into the arm, where it meets nothing (the patch and the arm do not collide): only its top 2 mm shows."""
+    out = []
+    edges = np.linspace(-PATCH_ARC, PATCH_ARC, PATCH_SEG + 1)
+    shell = lambda y, a, rad: [rad * math.sin(a), y, fore_top(y) / 2 + rad * math.cos(a)]      # noqa: E731
+    for a0, a1 in zip(edges, edges[1:]):
+        pts = [shell(y, a, fore_top(y) / 2 + t) for y in PATCH_Y for a in (a0, a1) for t in (-PATCH_ROOT, PATCH_GAP + PATCH_T)]
+        out.append((np.array(pts), PATCH_SKIN, True))
+        top = fore_top(MARK_Y) / 2 + PATCH_GAP + PATCH_T
+        ink = [shell(MARK_Y + dy, a, top + t) for dy in (-0.001, 0.001) for a in (a0, a1) for t in (-0.0001, 0.0004)]
+        out.append((np.array(ink), INK, False))
     return out
 
 
@@ -249,6 +305,15 @@ class Holder(_Part):
 
 
 @dataclass(frozen=True)
+class SkinPatch(_Part):
+    """The patch of forearm skin that can be drawn toward the wrist, loose on its slide. ``pos``: the training arm's
+    own origin (the patch's pieces are given in the arm's frame). ``arm`` names the arm it belongs to."""
+    quat: tuple = (0.0, 0.0, 0.0, 1.0)
+    mass: float | None = PATCH_MASS
+    arm: str = "training_arm"
+
+
+@dataclass(frozen=True)
 class KitState(ObjectState):
     """A kit object as the simulator has it; ``pos`` is its own origin (see each class)."""
 
@@ -262,6 +327,22 @@ def _rotation(q) -> np.ndarray:
     return np.array([[1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)],
                      [2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x)],
                      [2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)]])
+
+
+def _quat(rot) -> tuple:
+    """Quaternion (xyzw) of a rotation matrix."""
+    m = np.asarray(rot, float)
+    tr = m[0, 0] + m[1, 1] + m[2, 2]
+    if tr > 0:
+        k = math.sqrt(tr + 1.0) * 2
+        q = ((m[2, 1] - m[1, 2]) / k, (m[0, 2] - m[2, 0]) / k, (m[1, 0] - m[0, 1]) / k, 0.25 * k)
+    else:
+        i = int(np.argmax([m[0, 0], m[1, 1], m[2, 2]]))
+        j, l = (i + 1) % 3, (i + 2) % 3
+        k = math.sqrt(max(1e-12, 1.0 + m[i, i] - m[j, j] - m[l, l])) * 2
+        q = [0.0, 0.0, 0.0, (m[l, j] - m[j, l]) / k]
+        q[i], q[j], q[l] = 0.25 * k, (m[j, i] + m[i, j]) / k, (m[l, i] + m[i, l]) / k
+    return tuple(float(v) for v in q)
 
 
 def place(pos, quat, local) -> np.ndarray:
@@ -290,6 +371,37 @@ def needle(holder_pos, holder_quat) -> dict:
 def skin_top(x: float) -> float:
     """The height of the skin over the elbow, ``x`` from the vein's line (the arm's frame)."""
     return ELBOW_R + math.sqrt(max(ELBOW_R ** 2 - x * x, 0.0))
+
+
+def skin_cross(tip, n):
+    """Where the needle's line (through ``tip`` along ``n``, the arm's frame) meets the skin over the elbow: the
+    crossing nearest the tip. None if the line misses the arm."""
+    tip, n = np.asarray(tip, float), np.asarray(n, float)
+    qx, qz = float(tip[0]), float(tip[2]) - ELBOW_R
+    a = float(n[0] ** 2 + n[2] ** 2)
+    if a < 1e-12:
+        return None
+    b = 2.0 * (qx * float(n[0]) + qz * float(n[2]))
+    c = qx * qx + qz * qz - ELBOW_R ** 2
+    disc = b * b - 4 * a * c
+    if disc < 0:
+        return None
+    roots = [(-b - math.sqrt(disc)) / (2 * a), (-b + math.sqrt(disc)) / (2 * a)]
+    t = min(roots, key=abs)
+    return tip + t * n
+
+
+def resistance(tip, vein_x: float = 0.0) -> float:
+    """The force (N) that opposes the needle's sliding with its tip at ``tip`` (the arm's frame): ``F_SKIN`` until the
+    skin is pierced (the tip 1 mm under it), ``F_WALL`` within 0.25 mm of the vein's wall, ``F_SHAFT`` anywhere else."""
+    x, y, z = (float(v) for v in tip)
+    depth = ELBOW_R - math.hypot(x, z - ELBOW_R)
+    if depth < IN_SKIN:
+        return F_SKIN
+    r = math.hypot(x - vein_x, z - (SKIN_H - VEIN_DEPTH))
+    if VEIN_Y[0] <= y <= VEIN_Y[1] and abs(r - VEIN_R) <= WALL_HALF:
+        return F_WALL
+    return F_SHAFT
 
 
 _HULLS: dict = {}
@@ -324,18 +436,6 @@ def arm_distance(points) -> np.ndarray:
     return d
 
 
-def anchored(points) -> bool:
-    """Whether any of ``points`` (a gripper's finger points, the arm's frame) is on the forearm's skin inside the
-    anchoring window: 8 to 14 cm below the crease, within 2 cm of the vein's line, within 2.5 mm of the skin."""
-    q = np.atleast_2d(np.asarray(points, float))
-    if not len(q):
-        return False
-    inside = (q[:, 1] >= ANCHOR_Y[0]) & (q[:, 1] <= ANCHOR_Y[1]) & (np.abs(q[:, 0]) <= ANCHOR_X) & (q[:, 2] > 0.02)
-    if not inside.any():
-        return False
-    return bool((arm_distance(q[inside]) <= ANCHOR_TOUCH).any())
-
-
 class Stick:
     """What the needle does, from where it is (pure; everything in the arm's frame). Call :meth:`step` once per
     control step with the needle's tip, direction and bevel-up vector, and whether the vein is held just then.
@@ -344,10 +444,10 @@ class Stick:
       it is at the site (within 8 mm of the vein's line and 12 mm of the crease), 10 to 30 degrees to the skin, with
       the bevel facing away from the skin within 30 degrees. Any other crossing is a bad stick.
     - The **vein is reached** when the tip is as deep as the vein's near wall. If the vein is not held at that moment
-      it moves 5 mm aside, away from the needle, and stays there while the needle is in. That is a rule, not physics.
+      (the skin below the site is not drawn toward the wrist) it moves 5 mm aside, away from the needle, and stays
+      there while the needle is in. That is a rule, not physics.
     - The tip is **in the vein** while it is inside the vein's 4 mm lumen. It has gone **through** once it is deeper
       than the vein's far wall under the lumen.
-    - The shaft may not be **swept** sideways in the skin: where it crosses the skin may not move more than 2 mm.
     """
 
     def __init__(self):
@@ -365,7 +465,6 @@ class Stick:
         self.vein_x = 0.0                     # where the vein is now (it may have rolled aside)
         self.in_vein = False
         self.through = False
-        self.swept = False
         self.depth = 0.0                      # the tip under the skin (m, negative outside)
         self.angle = self.bevel = 0.0         # the needle's angle to the skin and the bevel's error, now (degrees)
         self.off_site = False                 # the tip is at the skin away from the site
@@ -413,10 +512,6 @@ class Stick:
         if not self.over or self.depth < 0.0:
             self.state, self.in_vein = "out", False          # drawn out again
             return
-        to_entry = self.entry - tip
-        side = to_entry - (to_entry @ n) * n                 # from the shaft's line to where it crossed the skin
-        if float(np.linalg.norm(side)) > SWEEP:
-            self.swept = True
         near = SKIN_H - VEIN_DEPTH + VEIN_R                  # the height of the vein's near wall
         if not self.reached and z <= near and abs(x) <= VEIN_R + VEIN_ROLL:
             self.reached, self.held, self.kept = True, bool(held_now), bool(held_now)
@@ -564,6 +659,18 @@ def _spawn_holder(prim_path: str, cfg, translation=None, orientation=None, **kwa
     return a.root
 
 
+def _spawn_patch(prim_path: str, cfg, translation=None, orientation=None, **kwargs):
+    from pxr import UsdPhysics
+
+    spec, a = _start(cfg, prim_path, translation, orientation, PATCH_MASS, iterations=32)
+    a.pieces(f"{prim_path}/p", patch_pieces(), a.mat("skin", *FRICTION), rough=0.7)
+    if spec.arm in _PATHS:                           # the patch and the arm's core under it do not collide
+        UsdPhysics.FilteredPairsAPI.Apply(a.root).CreateFilteredPairsRel().SetTargets([_PATHS[spec.arm]])
+    else:
+        print(f"[veinkit] {spec.name}: its arm {spec.arm!r} is not spawned yet; they will collide", file=sys.stderr, flush=True)
+    return a.root
+
+
 def _rigid_object(spec, spawn):
     from isaaclab.sim.spawners.spawner_cfg import RigidObjectSpawnerCfg
     from isaaclab.sim.utils import clone
@@ -585,8 +692,8 @@ def _rigid_object(spec, spawn):
 
 
 
-_SPAWNERS = {TrainArm: _spawn_arm, Cradle: _spawn_cradle, Holder: _spawn_holder}
-_PIECES = {TrainArm: arm_pieces, Cradle: cradle_pieces, Holder: holder_pieces}
+_SPAWNERS = {TrainArm: _spawn_arm, Cradle: _spawn_cradle, Holder: _spawn_holder, SkinPatch: _spawn_patch}
+_PIECES = {TrainArm: arm_pieces, Cradle: cradle_pieces, Holder: holder_pieces, SkinPatch: patch_pieces}
 _BOUNDS: dict = {}
 
 
@@ -604,6 +711,150 @@ def _carry(environment) -> None:
             asset.permanent_wrench_composer.set_forces_and_torques_index(forces=ft, torques=torch.zeros_like(ft), is_global=True)
         except Exception as err:                     # noqa: BLE001
             print(f"[veinkit] weight not carried for {n}: {err!r}", file=sys.stderr, flush=True)
+
+
+# -- joints ------------------------------------------------------------------------------------------------------------
+
+_NEEDLE: dict = {"on": False, "force": 0.0, "path": None, "entry": None}
+_PATCH_AT = np.array([0.0, (PATCH_Y[0] + PATCH_Y[1]) / 2, 0.08])       # where the patch's slide is pinned (arm frame)
+
+
+def _patches() -> list:
+    return [(n, s.arm) for n, s in _SPECS.items() if isinstance(s, SkinPatch) and n in _PATHS and s.arm in _PATHS]
+
+
+def _author_patch(name: str, arm: str) -> None:
+    """The skin patch's slide on the arm: along the forearm's top line, a spring back to where it lies, stops at
+    ``TRACTION_MAX`` toward the wrist and 2 mm the other way. Disabled first, frames set, enabled last."""
+    from isaaclab.sim.utils.stage import get_current_stage
+    from pxr import Gf, UsdPhysics
+
+    stage = get_current_stage()
+    joint = UsdPhysics.PrismaticJoint.Define(stage, f"{_PATHS[name]}/slide_joint")
+    joint.CreateJointEnabledAttr().Set(False)
+    joint.CreateBody0Rel().SetTargets([_PATHS[arm]])
+    joint.CreateBody1Rel().SetTargets([_PATHS[name]])
+    d = patch_axis()                                         # toward the wrist; the joint's +Y is the other way
+    slope = math.atan2(-float(d[2]), -float(d[1]))
+    rot = Gf.Quatf(math.cos(slope / 2), math.sin(slope / 2), 0.0, 0.0)
+    for make_pos, make_rot in ((joint.CreateLocalPos0Attr, joint.CreateLocalRot0Attr),
+                               (joint.CreateLocalPos1Attr, joint.CreateLocalRot1Attr)):
+        make_pos().Set(Gf.Vec3f(*(float(v) for v in _PATCH_AT)))
+        make_rot().Set(rot)
+    joint.CreateExcludeFromArticulationAttr().Set(True)
+    joint.CreateCollisionEnabledAttr().Set(False)
+    joint.CreateAxisAttr().Set("Y")
+    joint.CreateLowerLimitAttr().Set(-float(TRACTION_MAX))
+    joint.CreateUpperLimitAttr().Set(0.002)
+    drive = UsdPhysics.DriveAPI.Apply(joint.GetPrim(), "linear")
+    drive.CreateTypeAttr().Set("force")
+    drive.CreateStiffnessAttr().Set(float(SKIN_K))
+    drive.CreateDampingAttr().Set(float(SKIN_C))
+    drive.CreateTargetPositionAttr().Set(0.0)
+    joint.CreateJointEnabledAttr().Set(True)
+
+
+def traction(patch_pos, arm_pos) -> float:
+    """How far (m) the skin patch is drawn toward the wrist, from its and the arm's positions (their origins coincide
+    when the skin lies where it does at rest)."""
+    return float((np.asarray(patch_pos, float) - np.asarray(arm_pos, float)) @ patch_axis())
+
+
+def engaged() -> bool:
+    """The needle's point is in or on the skin: its joint to the arm is on."""
+    return bool(_NEEDLE["on"])
+
+
+def engage(arm: str, holder: str, entry, holder_quat, force: float = F_SKIN) -> None:
+    """Join the holder to the arm where the needle's point meets the skin (``entry``, the arm's frame): the needle
+    slides on the line it has now against ``force`` N (a damper that tops out there), and springs hold its tip to that
+    line and its shaft to that direction. It can still turn about its own axis."""
+    from isaaclab.sim.utils.stage import get_current_stage
+    from pxr import Gf, UsdPhysics
+
+    stage = get_current_stage()
+    path = f"{_PATHS[holder]}/needle_joint"
+    joint = UsdPhysics.Joint.Define(stage, path)
+    joint.CreateJointEnabledAttr().Set(False)
+    joint.CreateBody0Rel().SetTargets([_PATHS[arm]])
+    joint.CreateBody1Rel().SetTargets([_PATHS[holder]])
+    turn = np.array([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])       # the joint's x along the holder's +y
+    q0 = _quat(_rotation(holder_quat) @ turn)                # the arm is not turned: its frame is the world's
+    q1 = _quat(turn)
+    joint.CreateLocalPos0Attr().Set(Gf.Vec3f(*(float(v) for v in entry)))
+    joint.CreateLocalRot0Attr().Set(Gf.Quatf(q0[3], q0[0], q0[1], q0[2]))
+    joint.CreateLocalPos1Attr().Set(Gf.Vec3f(0.0, float(TIP_Y), 0.0))
+    joint.CreateLocalRot1Attr().Set(Gf.Quatf(q1[3], q1[0], q1[1], q1[2]))
+    joint.CreateExcludeFromArticulationAttr().Set(True)
+    joint.CreateCollisionEnabledAttr().Set(True)
+    prim = joint.GetPrim()
+    slide = UsdPhysics.DriveAPI.Apply(prim, "transX")        # tissue resistance: a damper that tops out at ``force``
+    slide.CreateTypeAttr().Set("force")
+    slide.CreateStiffnessAttr().Set(0.0)
+    slide.CreateDampingAttr().Set(float(RESIST_C))
+    slide.CreateMaxForceAttr().Set(float(force))
+    slide.CreateTargetVelocityAttr().Set(0.0)
+    for axis in ("transY", "transZ"):
+        d = UsdPhysics.DriveAPI.Apply(prim, axis)
+        d.CreateTypeAttr().Set("force")
+        d.CreateStiffnessAttr().Set(float(LINE_K))
+        d.CreateDampingAttr().Set(float(LINE_C))
+        d.CreateTargetPositionAttr().Set(0.0)
+    for axis in ("rotY", "rotZ"):                            # USD's angular drives are per degree
+        d = UsdPhysics.DriveAPI.Apply(prim, axis)
+        d.CreateTypeAttr().Set("force")
+        d.CreateStiffnessAttr().Set(float(SWING_K) * math.pi / 180.0)
+        d.CreateDampingAttr().Set(float(SWING_C) * math.pi / 180.0)
+        d.CreateTargetPositionAttr().Set(0.0)
+    joint.CreateJointEnabledAttr().Set(True)
+    _NEEDLE.update(on=True, force=float(force), path=path, entry=tuple(float(v) for v in entry))
+
+
+def set_resistance(force: float) -> None:
+    """Change what the needle's slide tops out at (N). Written only when it changes."""
+    if not _NEEDLE["on"] or abs(float(force) - _NEEDLE["force"]) < 1e-9:
+        return
+    from isaaclab.sim.utils.stage import get_current_stage
+
+    prim = get_current_stage().GetPrimAtPath(_NEEDLE["path"])
+    if prim and prim.IsValid():
+        prim.GetAttribute("drive:transX:physics:maxForce").Set(float(force))
+        _NEEDLE["force"] = float(force)
+
+
+def release() -> None:
+    """The needle is out of the skin: switch its joint off."""
+    if _NEEDLE["path"]:
+        from isaaclab.sim.utils.stage import get_current_stage
+
+        prim = get_current_stage().GetPrimAtPath(_NEEDLE["path"])
+        if prim and prim.IsValid():
+            prim.GetAttribute("physics:jointEnabled").Set(False)
+    _NEEDLE.update(on=False, force=0.0, entry=None)
+
+
+def _disarm() -> None:
+    """Switch every joint off (before a reset puts the parts back)."""
+    from isaaclab.sim.utils.stage import get_current_stage
+
+    release()
+    _ARMED["patches"] = False
+    stage = get_current_stage()
+    for name, _ in _patches():
+        prim = stage.GetPrimAtPath(f"{_PATHS[name]}/slide_joint")
+        if prim and prim.IsValid():
+            prim.GetAttribute("physics:jointEnabled").Set(False)
+
+
+_ARMED: dict = {"patches": False}
+
+
+def _arm(environment) -> None:
+    """Join the parts as the reset left them: each skin patch to its arm."""
+    for name, arm in _patches():
+        _author_patch(name, arm)
+    _ARMED["patches"] = bool(_patches())
+    print(f"[veinkit] skin patches joined: {_patches()}", file=sys.stderr, flush=True)
 
 
 def _local_bounds(spec) -> tuple:
@@ -750,12 +1001,40 @@ def _patch_embodiment(module) -> None:
 
     def _task_step(self, *a, **k):
         _ENV["env"] = self._env
+        if not _ARMED["patches"]:
+            _arm(self._env)
         for fn in _STEP:
             fn(self._env)
         return stock_step(self, *a, **k)
 
     def reset(self, *a, **k):
-        obs = stock_reset(self, *a, **k)
+        # The joints have to be whole before the reset's settling steps and first picture: switch them off, let the
+        # environment put the parts back, then author them afresh from where the parts are.
+        base, saved, had = None, None, False
+        try:
+            self._ensure_sim(None)
+            base = self._env.unwrapped
+            env_reset = base.reset
+            saved, had = vars(base).get("reset"), "reset" in vars(base)
+
+            def reset_then_arm(*aa, **kk):
+                _disarm()
+                result = env_reset(*aa, **kk)
+                _arm(self._env)
+                return result
+
+            base.reset = reset_then_arm
+        except Exception as err:                     # noqa: BLE001
+            print(f"[veinkit] joints not re-armed around the reset: {err!r}", file=sys.stderr, flush=True)
+            base = None
+        try:
+            obs = stock_reset(self, *a, **k)
+        finally:
+            if base is not None:
+                if had:
+                    base.reset = saved
+                else:
+                    del base.reset
         _ENV["env"] = self._env
         _carry(self._env)
         for fn in _RESET:
