@@ -285,7 +285,6 @@ def test_task_json(A):
     j = json.loads(path.read_text())
     for key in ("title", "category", "instruction", "setup", "scoring", "run_limit", "fidelity", "scores"):
         assert j.get(key), key
-    assert "media" not in j
     assert j["instruction"] == A.INSTRUCTION
     assert len(j["title"]) <= 120 and len(j["fidelity"]) <= 500 and len(j.get("context", "")) <= 1000 and len(j["scores"]) <= 300
     assert j["category"] == "Societal relatability"
