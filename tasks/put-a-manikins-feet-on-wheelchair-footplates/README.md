@@ -28,6 +28,7 @@ leaves 2 cm and 40 degrees does not clear it; the demo holds it at 48).
 | `demo.py` | A scripted demo that reaches full score, and five control runs. |
 | `test_scoring.py` | 20 checks of the shapes, the measurements and the scoring rule; no simulator needed. |
 | `task.json` | The task's description for the board. |
+| `legs.svg` | Drawing of the lower-cost legs for real trials (see "Building the legs"). |
 
 ## Running and scoring a trial
 
@@ -162,6 +163,8 @@ there. The other plate stayed up, and neither leg was lifted.
   Skills Manikin (LF04020), listed as 58 in tall and about 28 lb, with "Knee - Extension, Flexion". Seat it with its
   hips against the back and belt its trunk and thighs to the chair. The listing also gives its ankle as jointed; here
   the ankle is rigid at a right angle, so splint or tape the ankles.
+  A full nursing manikin is costly. The lower-cost stand-in is a pair of jointed lower legs on a seat board:
+  see **Building the legs** below. Nothing in the task touches the manikin above the knees.
 - **Floor.** A platform level with the arms' mounts, 1.6 m deep in front of them, or the arms mounted at floor level.
 - **Check before a trial:** each hanging sole is about 5 mm below the level of its plate's top; each plate, folded up,
   stays up, and falls onto its stop when its top is pushed 4 cm inward.
@@ -170,6 +173,54 @@ there. The other plate stayed up, and neither leg was lifted.
 
 Measure the real chair and manikin first. Apart from the catalogue sizes listed under Sources, every size and mass
 here is an estimate (next section).
+
+## Building the legs
+
+![The legs: side view of one leg, the foot block's sole, front view of the mounting](legs.svg)
+
+Two jointed lower legs on a seat board stand in for the manikin. They are plywood, a plastic tube, foam and bolts
+from a hardware store, cut with a saw and a drill. **This is a design drawn from the simulated leg's own numbers; it
+has not been built.** The checks at the end are part of the build, not an option.
+
+### Parts
+
+| No. | Part | Size | Notes |
+|---|---|---|---|
+| 1 | Seat board | 12 mm plywood, 457 x 400 mm (the seat's 18 x 16 in) | Lies on the chair's sling seat, front edge level with the seat's front edge |
+| 2 | Cheeks, four | 18 mm plywood, 200 x 78 mm | Two per leg, 40 mm apart, standing on the board and screwed to it from below, overhanging its front edge by 100 mm. An 8.5 mm hole for the pin, 65 mm in front of the board's front edge and 43 mm above the board's top (55 mm above the seat) |
+| 3 | Knee pin, two | M8 x 100 mm bolt with a self-locking nut, a washer either side of the tube | Done up so that the tube turns freely with about 1 mm of side play |
+| 4 | Core tube, two | Rigid plastic tube, 32 mm outside diameter (or a hardwood dowel of that size), an 8.5 mm cross hole 20 mm from its top end | Its lower end goes 40 mm into a hole in the foot block. Cut it so that the pin's centre is 395 mm above the sole |
+| 5 | Foam | Closed-cell foam (pipe insulation or a camping mat) wrapped round the tube and taped | Built up to these diameters, within 5 mm: 104 mm at 50 mm below the pin, 106 at 80, 90 at 180, 68 at 270, 62 at 325. It starts 50 mm below the pin, clear of the cheeks |
+| 6 | Foot block, two | Softwood, 222 mm long, sole flat, widths and heights as in view B of the drawing | The tube's axis is 44 mm in front of the heel's back, on the sole's midline, square to the sole. Glue and screw the tube in: the ankle does not move |
+| 7 | Straps, two | Cam-buckle or ratchet straps | Over the board and round the chair's seat rails, one near the front and one near the back |
+| 8 | Ballast | Steel washers or fishing weights | Taped inside the tube or screwed to the top of the foot block |
+| 9 | Covering | Vinyl tape or sheet over the foam and the foot | Closer to a manikin's vinyl skin under the gripper's fingers |
+| 10 | Stops, two per leg | Wood screws or small blocks on a cheek | Stop the leg 20 degrees back of hanging and 85 degrees forward |
+
+### How it goes together
+
+1. Screw the four cheeks to the seat board, a pair for each leg, the pairs' middles 220 mm apart and centred on the
+   board.
+2. Glue and screw each tube into its foot block, toes pointing square to the cross hole's axis, and cut the tube to
+   length (pin's centre 395 mm above the sole).
+3. Wrap the foam to the listed diameters and cover foam and foot with vinyl.
+4. Put each leg between its cheeks on its pin, toes away from the board. Fit the two stops.
+5. Lay the board on the wheelchair's seat, front edges level, and strap it down. The two legs put about 1.6 kg in
+   front of the seat's edge, so the rear strap has to be tight.
+
+### Checks
+
+- **Mass.** Each finished leg, off its pin, weighs 780 g (760 to 800 g). Add ballast, or hollow the top of the foot
+  block, until it does.
+- **Balance.** Laid across a pencil, the leg balances 163 mm below the pin's hole (150 to 175 mm), measured along the
+  tube. Move the ballast up or down until it does. The 163 mm is the simulated leg's centre of mass, worked out from
+  its shapes at uniform density.
+- **Free knee.** Held 45 degrees forward and let go, the leg swings back through hanging and comes to rest hanging.
+  A letter scale or spring scale hooked at the ankle, 340 mm below the pin, moves the hanging leg at 0.15 N (15 g)
+  or less. The simulated knee's friction is 0.05 N m, an estimate.
+- **Place.** With the board strapped down, each hanging sole is 155 mm above the floor, the pins are 220 mm apart
+  and centred on the chair, and the toes point straight ahead. Then set the footrests' length so that the
+  folded-down plates' tops are 160 mm above the floor: 5 mm above the hanging soles, as in the simulation.
 
 ## What the simulation simplifies
 
