@@ -3,8 +3,9 @@
 A flip-top pocket box of mints lies on the table with its lid shut, part full. Beside it stands a small dish. The
 instruction is "Shake two mints out of the mint box into the dish, then close the box and put it back on the table."
 
-The box is the size of a 1 oz retail pack, 47 x 17 x 73 mm. Its mints are half a gram each. They leave through a
-12 x 10 mm opening in one corner of the lid end, under a hinged flap that snaps shut.
+The box is a 1 oz (60-count) pack of Tic Tac Freshmint, 47 x 17 x 73 mm, the brand's clear flip-top box. Its mints
+are half a gram each. They leave through a 12 x 10 mm opening in one corner of the lid end, under a hinged flap that
+snaps shut.
 
 ## What the task asks of a robot
 
@@ -164,7 +165,7 @@ where it had started and the dish was empty.
 
 ## Building it for real
 
-- A 1 oz (60-count) flip-top box of small hard mints, 47 x 17 x 73 mm, with the label peeled off. Count out all
+- A 1 oz (60-count) box of Tic Tac Freshmint, 47 x 17 x 73 mm, with the label peeled off. Count out all
   but 30 mints (24 for layout B), shut the lid, shake the box level so that the mints lie in one layer, and lay it
   on its mark, lid end toward the robot, with the corner the opening is in on the robot's right.
 - A square stoneware or glass dish about 11 cm inside and 2.5 cm deep, fixed to the table with putty.
@@ -176,8 +177,8 @@ its mark. Mints that have been on the table should not be eaten.
 ## What the simulation simplifies
 
 - Everything is rigid. A mint is a capsule.
-- **Sourced:** the pack's outside size, 47 x 17 x 73 mm (a retailer's listing of the 1 oz pack: about
-  1.85 x 0.67 x 2.87 in); 60 mints in a 1 oz pack and 0.5 g a mint (the maker's page).
+- **Sourced:** the pack's outside size, 47 x 17 x 73 mm (a retailer's listing of the 1 oz Tic Tac Freshmint
+  pack: about 1.85 x 0.67 x 2.87 in); 60 mints in a 1 oz pack and 0.5 g a mint (Tic Tac's product page).
 - **Estimates, not measurements:** the mint's size (11.5 x 6.5 mm; with the labelled 0.5 g that is the density of
   sugar, 1.6 g/cm3); the opening (12 x 10 mm); the flap (22.5 x 15 x 1.5 mm, hinged 20 mm from the side, opening to
   110 degrees) and its 2.5 mm lip; the walls (1 mm) and the plate the opening is cut in (2 mm); the empty box's
