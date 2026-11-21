@@ -10,6 +10,14 @@ the send tube until the station takes it, then let go.
 
 The table stands in for the counter. Everything is at full size.
 
+## Why it matters
+
+Pneumatic tubes are how much of a hospital's medication reaches its wards: one maker's system is used in over 80% of
+North American hospitals, and pharmaceuticals are about 30% of what hospital tube systems carry (see Sources). The
+tube moves a carrier by itself, but every carrier is still loaded, shut and sent from a station by a person. That
+step is what a robot has to take over before medication transport in a hospital can run without staff, and it is a
+two-handed one: the carrier must be held while its lid is swung shut, and then fed into a tube barely wider than it.
+
 ## Why it takes two hands, and what makes it hard
 
 - **The carrier has to be held while its lid is shut.** It weighs about 290 g and stands on an end 8.6 cm across.
@@ -246,8 +254,12 @@ No accepted or pending task handles a pneumatic tube carrier or a tube station.
 
 ## Sources
 
-- O*NET OnLine, 29-2052.00 Pharmacy Technicians: "471,200 employees" (2025); task: "Deliver medications or
-  pharmaceutical supplies to patients, nursing stations, or surgery."
+- How widely hospitals use tube systems: Health-ISAC bulletin on the Translogic pneumatic tube system (2 August 2021):
+  "This Translogic PTS system is used in over 80% of hospitals in North America"; American Hospital Association,
+  Fast Facts on U.S. Hospitals, 2026: "There are 6,100 hospitals in the United States."
+- What the tubes carry: MIT Technology Review, an article on hospital tube systems (19 June 2024): "Today, lab specimens are
+  roughly 60% of what hospital tube systems carry"; "pharmaceuticals account for 30%, and blood products for phlebotomy
+  make up 5%."; of one university hospital's system: "completes more than 6,000 transactions on an average day."
 - NHS National Services Scotland, Scottish Health Technical Memorandum 08-04, "Pneumatic tube transport systems",
   Part B (2015): the carrier table's row "110 Short Swivel top 110 800 80 228" (nominal tube 110 mm, bend radius
   800 mm, internal diameter 80 mm, length 228 mm); "network tubing: 160mm or 110mm diameter"; 3.13: "The carrier lids
