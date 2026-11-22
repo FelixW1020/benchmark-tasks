@@ -10,14 +10,18 @@ walls and flaps hang over its edges and a hand can get under them.
 
 ## Why it matters
 
-Fast food and counter workers (O*NET 35-3023.00, 3,855,900 employed in 2025) "Wrap menu items such as sandwiches, hot
-entrees, and desserts for serving or for takeout." Fast food cooks (35-2011.00, 640,500 employed) "Cook and package
-batches of food, such as hamburgers or fried chicken, prepared to order or kept warm until sold." Packers and packagers
-(53-7064.00, 555,500 employed) "Assemble, line, and pad cartons, crates, and containers, using hand tools."
+Pizza is one of the most familiar take-out foods. USDA's national dietary survey found that "About 1 in 8 Americans
+consumed pizza on any given day", and take-out and delivery pizza travels in a box like this one. Most people have
+opened and closed a pizza box at home, and the stack of flat blanks being folded behind a pizza shop's counter is a
+common sight. The result is easy for anyone to judge: either it is a box, with its walls up, its front locked and its
+lid shut, or it is not.
 
 A pizza box reaches the shop as a flat blank. The listing for the box modelled here says "It ships flat to maximize
 storage space and can easily be assembled by folding along perforated edges and locking the ends." A shop folds a stack
-of them before every rush, and every pizza sold to go leaves in one.
+of them before every rush. The folding is part of packaging food to go, which O*NET lists for counter workers ("Wrap
+menu items such as sandwiches, hot entrees, and desserts for serving or for takeout.") and fast food cooks ("Cook and
+package batches of food, such as hamburgers or fried chicken, prepared to order or kept warm until sold."); the task is
+submitted as an everyday activity, not as a claim about those occupations' numbers.
 
 ## What the task asks of a robot
 
@@ -248,17 +252,19 @@ box closed: back wall, side walls, tabs, the front roll-over, the lid and its th
 
 In the popular task sets: BEHAVIOR-1K has `dispose_of_a_pizza_box` (a finished box and half a pizza end up inside an
 ashcan) and `make_a_christmas_gift_box` (wrapping paper laid over a packing box with a bell inside); neither folds a
-blank, and neither models a score that springs back. No task in LIBERO, RoboCasa, SimplerEnv, DataCenterBench or
+blank, and neither models a score that springs back. dexhand's Paper Half Fold folds one sheet in half; no fold there
+has to lock another. No task in LIBERO, RoboCasa, SimplerEnv, DataCenterBench or
 RoboDojo folds a box from a blank, as far as their task lists show.
 
 ## Sources
 
-- O*NET OnLine, 35-3023.00 Fast Food and Counter Workers: "Employment (2025) 3,855,900 employees"; task quoted above.
+- USDA Agricultural Research Service, Food Surveys Research Group, Dietary Data Brief No. 11, "Consumption of Pizza:
+  What We Eat in America, NHANES 2007-2010" (February 2014): "About 1 in 8 Americans consumed pizza on any given day."
+  https://www.ars.usda.gov/ARSUserFiles/80400530/pdf/DBrief/11_consumption_of_pizza_0710.pdf
+- O*NET OnLine, 35-3023.00 Fast Food and Counter Workers: task quoted above.
   https://www.onetonline.org/link/details/35-3023.00
-- O*NET OnLine, 35-2011.00 Cooks, Fast Food: "Employment (2025) 640,500 employees"; task quoted above.
+- O*NET OnLine, 35-2011.00 Cooks, Fast Food: task quoted above.
   https://www.onetonline.org/link/details/35-2011.00
-- O*NET OnLine, 53-7064.00 Packers and Packagers, Hand: "Employment (2025) 555,500 employees"; task quoted above.
-  https://www.onetonline.org/link/details/53-7064.00
 - WebstaurantStore, "Choice 10" x 10" x 2" White Corrugated Plain Pizza Box Bulk Pack - 50/Bundle", item
   245CPB10150WBULK: size, flute, "It ships flat ...", "Easy to assemble with pre-notched sides".
   https://www.webstaurantstore.com/choice-10-x-10-x-2-white-corrugated-plain-pizza-box-bulk-pack-bundle/245CPB10150WBULK.html
