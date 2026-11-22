@@ -43,6 +43,7 @@ A level foot (0 degrees) that is already in cannot be lifted straight out in tha
 | `sideview.py` | The side-view planning model above (used by the demo's plan and the tests, not by the scorer). |
 | `test_scoring.py` | 40 checks of the shapes, the fit measurements and the scoring rule; no simulator needed. |
 | `task.json` | The task's description for the board. |
+| `leg.svg` | Drawing of the low-cost jointed doll's working leg, to this task's sizes. |
 
 ## Running and scoring a trial
 
@@ -140,18 +141,19 @@ of the run; the clog was nudged but never lifted, and the leg was never touched.
 
 ## Building it for real
 
-- **Manikin.** A one-year-old pediatric care simulator with jointed knees: the Gaumard S110 "Mike and Michelle".
-  Distributors' listings give it as 32 in (81 cm) long with "jointed elbows and knees", a waist that bends, and a
-  "soft upper body skin over hard upper body". Sit it at the front of a child's chair with a 26 cm seat and hold its
-  trunk to the chair's back with a belt; the feet then hang about 7.5 cm above the floor.
-  - The listings give no leg or foot sizes. The sizes used here (knee to ankle 19 cm, ankle to sole 3.5 cm, foot
-    13 cm long and 5.4 cm wide, lower leg 350 g) are estimates for a manikin of that length, not measurements of
-    that model. Measure the manikin first. If its foot is not 13 cm long, use the clog size whose size chart matches
-    the foot and scale the toe limits in step 3 of "Scoring a real trial" by the same difference.
-  - The lower leg has to swing freely at the knee, as it does here. Whether that model's knee is this loose out of
-    the box has not been checked; slacken the joint if it holds a pose.
-  - One listing also calls the ankles jointed. The ankle here is rigid at a right angle: tape the manikin's ankle
-    if it moves.
+- **Manikin.** Either of two. The low-cost jointed doll is the one to build; the simulator is for a lab that
+  already has one.
+  - **A low-cost jointed doll**, built to this task's own sizes for about $40 of materials (an estimate): see
+    "A low-cost jointed doll" below and `leg.svg`.
+  - **A pediatric care simulator with jointed knees**: the Gaumard S110 "Mike and Michelle", a one-year-old.
+    Distributors' listings give it as 32 in (81 cm) long with "jointed elbows and knees", a waist that bends, and a
+    "soft upper body skin over hard upper body". It costs far more. The listings give no leg or foot sizes, so the
+    sizes used here are estimates for a manikin of that length, not measurements of that model: measure it first; if
+    its foot is not 13 cm long, use the clog size whose chart matches and scale the toe limits in step 3 of
+    "Scoring a real trial" by the same difference. Slacken its knee if it holds a pose, and tape its ankle at a right
+    angle if the ankle moves.
+  - Either way: sit it at the front of a child's chair with a 26 cm seat, trunk held to the chair's back with a belt;
+    the feet then hang about 7.5 cm above the floor.
 - **Clogs.** A pair of toddler size 6 foam clogs with pivoting heel straps (size charts give a 13.2 cm foot for
   that size). One goes on the left foot; the other stands on its mark with its strap back.
 - **Floor.** The table, or a mat on the real floor with the arms mounted at its edge.
@@ -160,6 +162,61 @@ of the run; the clog was nudged but never lifted, and the leg was never touched.
 The clog's sizes here (15.8 x 7.2 cm outside, 14.8 x 6.2 cm inside, 45 g, the vamp's heights, the strap's 6.2 cm
 radius) are estimates of such a clog, not measurements of one. So are the leg's mass (350 g), the knee's friction
 (0.03 N m) and the strap rivets' friction (0.012 N m). Measure the real parts before a real trial.
+
+## A low-cost jointed doll
+
+A seated toddler-size doll made from stock materials to the simulated manikin's own sizes, so that the knee moves
+and the clog fits as they do here. It is a design drawn from those numbers (`leg.svg`); it has not been built. Sizes
+in millimetres unless marked.
+
+| No. | Part | Size | Material | Price (estimates) |
+|---|---|---|---|---|
+| 1 | Thigh tubes, two | 164 long, about 66 across at the knee end and 80 at the hip end | foam pool noodle or a postal tube wrapped in foam | $5 |
+| 2 | Cheeks, two | 80 x 60 plates with a 6.5 hole | 9 mm plywood | offcuts |
+| 3 | Knee pin | M6 x 90 bolt, two nylon washers, a locking nut left loose | steel | $2 |
+| 4 | Shank cores, two | 21 across, 210 long | hardwood dowel | $4 |
+| 5 | Foam sleeves, two | tapered: see the table below | closed-cell pipe insulation, carved | $6 |
+| 6 | Foot blocks, two | 130 long, 54 wide at the ball: see the table below | softwood or dense foam, sanded smooth and sealed | offcuts |
+| 7 | Trunk | 150 deep, 220 wide, 300 tall | a carton or a foam block, belted to the chair's back | $3 |
+| 8 | Hands, two | about 40 across | foam blocks | offcuts |
+| 9 | Ballast | to bring the working lower leg and foot to 350 g | steel washers taped at mid-shank | $1 |
+| - | Child's chair, seat 230 x 340, top 264 above the floor | | wooden | about $20 |
+
+Sleeve widths (across, measured down from the knee pin): 62 at the pin, 64 at 45, 54 at 100, 41 at 155, 39 at 180.
+
+Foot block, from the heel's back toward the toes (width; height of its top above the sole):
+
+| From the heel | 0 | 10 | 32 | 55 | 85 | 105 | 122 | 130 |
+|---|---|---|---|---|---|---|---|---|
+| Width | 24 | 38 | 42 | 48 | 54 | 54 | 44 | 26 |
+| Top above the sole | 34 | 46 | 60 | 46 | 32 | 23 | 18 | 13 |
+
+Putting it together:
+
+1. Fix the two thigh tubes on the seat, level, pointing at the robot, their middles 140 apart, with their knee
+   ends 74 in front of the seat's front edge. The right knee's line is the scene's y 0.
+2. Fix the cheeks to the right thigh's knee end, one each side, 62 apart inside, so that the pin's hole is 110 in
+   front of the seat's front edge and 36 above the seat's top (the tube's own middle line).
+3. Drill each dowel across, 10 from its top. Glue a foot block on its lower end at a right angle, toes forward,
+   with the heel's back 32 behind the dowel's axis and the sole 225 below the hole. Slide the sleeve on and carve it
+   to the widths above.
+4. Hang the right leg on the pin between the cheeks with a nylon washer each side. Leave the nut loose: the leg
+   must swing freely. A screw in one cheek stops it 8 degrees forward of hanging; bending back, it is free to 115
+   degrees.
+5. Fix the left leg hanging plumb from the left thigh (glue its dowel into a plug in the tube) and put the other
+   clog on its foot.
+6. Belt the trunk to the chair's back behind the thighs, and rest the two hands on the thighs 60 to 100 behind the
+   knees.
+
+Check before trials:
+
+- The working lower leg with its foot weighs 350 g, give or take 20.
+- It hangs plumb with its sole 75 above the floor, give or take 5, toes toward the robot.
+- The knee is loose: a pull of 15 to 20 g at the ankle (190 below the pin; a small spring balance or coins on a
+  thread) starts it moving, and pushed back 30 degrees and let go it swings and comes to rest hanging. That is the
+  0.03 N m of friction used here.
+- The foot goes into the size 6 clog with about 18 to spare in length and 8 in width, and the strap swings round
+  behind the heel.
 
 ## What the simulation simplifies
 
