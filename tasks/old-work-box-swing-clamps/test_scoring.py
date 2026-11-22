@@ -178,10 +178,39 @@ def test_wall_and_parts_layout():
     assert abs(lo[2] + T.HOLE_Z) < 1e-9                       # the wall section stands on the table
     assert T.XW > 0.31                                          # clear of both arms' ready poses (x 0.30 within it)
     assert T.driver_low(*DRIVER_BLOCK) > 0.0                    # the driver's tip clears the table in its block
-    st = bp.rotation(T.BOX_START_XYZW)
-    corners = np.array(T.BOX_START) + np.array([[x, y, z] for x in (bp.DEPTH,) for y in (-1, 1) for z in (-1, 1)]) \
-        @ st.T
-    assert np.allclose(corners[:, 2], T.TOP + 0.3 * MM)         # lying on its back on the table
+    # the box hangs on its cable in front of the cut-out, square to the wall, its back short of the wall's face
+    assert np.allclose(np.array(T.BOX_START), T.HOLE - [bp.START_OUT, 0.0, 0.0])
+    assert T.BOX_START[0] + bp.DEPTH < T.XW - 5 * MM
+    assert np.allclose(bp.rotation(T.BOX_START_XYZW), I3)
+
+
+def test_cable_layout():
+    hang = bp.cable_path_hanging()
+    # 13 links and the stub, each bend 22.5 degrees, ending straight up under the top plate
+    assert len(hang) == bp.N_LINKS + 2 and np.allclose(hang[-1] - hang[-2], [0.0, bp.STUB])
+    anchor = T.CABLE_ANCHOR - T.HOLE
+    assert abs(anchor[2] - (bp.WALL_H - T.HOLE_Z - bp.STUD_W)) < 0.5 * MM          # where it leaves the top plate
+    assert bp.DRYWALL_T + 20 * MM < anchor[0] < bp.DRYWALL_T + bp.STUD_D - 20 * MM  # inside the stud bay
+    assert abs(anchor[1] - bp.CABLE_Y) < 1e-9
+    # at the start it comes out through the cut-out, clear of its edges, and into the port in the box's back wall
+    for p in hang:
+        x = p[0] + T.BOX_START[0] - T.XW                     # into the wall from its face
+        if -1 * MM <= x <= bp.DRYWALL_T + 1 * MM:
+            assert abs(p[1]) + bp.CABLE_T / 2 < bp.HOLE_H / 2 - 5 * MM
+    assert abs(bp.CABLE_Y) + bp.CABLE_W / 2 < min(bp.HOLE_W / 2, bp.BODY_BACK[0] - bp.WALL) - 0.2 * MM
+    assert bp.CABLE_Z + bp.CABLE_T / 2 < bp.OPEN_HH                             # it leaves through the box's opening
+    assert abs(bp.FED - 6 * 25.4 * MM) < 1e-9 and bp.TAIL_UP > 40 * MM
+    # the tail stays close to the wall: clear of the screwdriver's handle (from 40 mm out) and beside the top screw
+    assert -bp._tail_point(math.pi / 2)[0] + bp.CABLE_T / 2 < 30 * MM
+    assert abs(bp.CABLE_Y) - bp.CABLE_W / 2 > bp.HEAD_R + 5 * MM
+    # the unloaded shape (the joints' zero) is spawned so that the anchor is where the hanging cable's is
+    pos, quat = bp.cable_spawn(T.BOX_START)
+    end = bp.cable_path()[-1]
+    assert np.allclose(np.array(pos) + bp.rotation(quat) @ [end[0], bp.CABLE_Y, end[1]], T.CABLE_ANCHOR, atol=1e-9)
+    wind = bp.cable_windup()
+    assert all(0.0 < v < bp.M_PLASTIC / bp.K_BEND for v in wind.values())        # the hanging weight alone bends nothing for good
+    # every hinge holds the weight hanging from it with room to spare
+    assert max(wind.values()) * bp.K_BEND < 0.85 * bp.M_PLASTIC
 
 
 # -- scoring outcomes ----------------------------------------------------------------------------------------------------
@@ -297,6 +326,24 @@ def test_loosening_after_tightening_loses_the_credit():
     assert e.log[-1] == 0.5
 
 
+def test_cable_drawn_out_of_the_box_caps_the_score():
+    def fed(mm):
+        q = joints(SNUG, SNUG)
+        q["feed"] = -mm * MM
+        return q
+    e = full_episode()
+    assert e.log[-1] == 0.75
+    assert e.step(q=fed(14.0)) == 0.75                           # within 15 mm: still fed in
+    assert e.step(q=fed(16.0)) == 0.25                           # drawn out: both clamps tight earn nothing more
+    e.driver = (np.array([0.25, -0.05, T.TOP + 0.016]), rot_y(90))
+    e.step(60)
+    assert max(e.log[-60:]) == 0.25 and not e.ended               # and it never succeeds
+    assert e.step(q=fed(10.0)) == 0.75                           # pushed back through the entry: it counts again
+    e = Episode()
+    assert e.step(5, q={**joints(), "feed": -0.03}) == 0.0        # drawing the cable out earns nothing by itself
+    assert abs(bp.cable_fed({"feed": 0.0}) - bp.FED) < 1e-12 and abs(bp.cable_fed({}) - bp.FED) < 1e-12
+
+
 def test_moving_box_never_succeeds():
     e = full_episode()
     e.driver = (np.array([0.25, -0.05, T.TOP + 0.016]), rot_y(90))
@@ -320,13 +367,17 @@ def test_demo_plan_reaches_and_stays_clear():
         left = demo.Arm("left", station.BASES["left"])
         right = demo.Arm("right", station.BASES["right"])
 
-    def points(arm):
+    def points(arm, links=("link4", "link5", "gripper", "tip_left", "tip_right")):
         q = {n: float(v) for n, v in zip(ARM_JOINTS, arm.q[:6])}
-        # fingers opened inside the box stop on its side walls (24.5 mm from its middle): no wider than that
-        q["joint7"] = q["joint8"] = -0.04695 * min(arm.grip, 0.38)
+        q["joint7"] = q["joint8"] = -0.04695 * arm.grip
         P = fk_link_poses_world(q, arm.base)
-        return np.vstack([h.vertices @ P[lk][:3, :3].T + P[lk][:3, 3]
-                          for lk in ("link4", "link5", "gripper", "tip_left", "tip_right") for h in hulls[lk]])
+        return np.vstack([h.vertices @ P[lk][:3, :3].T + P[lk][:3, 3] for lk in links for h in hulls[lk]])
+
+    def in_wall(P):
+        inwall = ((P[:, 0] > T.XW + 1 * MM) & (P[:, 0] < T.XW + bp.DRYWALL_T + bp.STUD_D)
+                  & (np.abs(P[:, 1]) < bp.WALL_W / 2) & (P[:, 2] < T.TOP + bp.WALL_H))
+        in_hole = (np.abs(P[:, 1]) < bp.HOLE_W / 2) & (np.abs(P[:, 2] - T.HOLE[2]) < bp.HOLE_H / 2)
+        return np.any(inwall & ~in_hole)
 
     c = Ctx()
     n = 0
@@ -338,13 +389,13 @@ def test_demo_plan_reaches_and_stays_clear():
             assert abs(a.q[5]) <= math.radians(120) + 1e-6
         if n % 4 == 0:
             pl, pr = points(c.left), points(c.right)
-            assert np.min(np.linalg.norm(pl[::5, None] - pr[None, ::5], axis=2)) > 0.09
-            for P in (pl, pr):
-                assert P[:, 2].min() > T.TOP - 1 * MM
-                inwall = ((P[:, 0] > T.XW + 1 * MM) & (P[:, 0] < T.XW + bp.DRYWALL_T + bp.STUD_D)
-                          & (np.abs(P[:, 1]) < bp.WALL_W / 2) & (P[:, 2] < T.TOP + bp.WALL_H))
-                in_hole = (np.abs(P[:, 1]) < bp.HOLE_W / 2) & (np.abs(P[:, 2] - T.HOLE[2]) < bp.HOLE_H / 2)
-                assert not np.any(inwall & ~in_hole)
+            # the holding hand and the screwdriver hand work close together at the box: at least 4 cm apart
+            assert np.min(np.linalg.norm(pl[::5, None] - pr[None, ::5], axis=2)) > 0.04
+            assert min(pl[:, 2].min(), pr[:, 2].min()) > T.TOP - 1 * MM
+            # no part of the right arm goes into the wall; the left hand's fingertips are sent past the ears' face
+            # when it pushes and holds (the ears stop them), so only the rest of that arm is checked
+            assert not in_wall(pr)
+            assert not in_wall(points(c.left, ("link4", "link5", "gripper")))
     limit = int(re.match(r"([\d,]+) steps", J["run_limit"]).group(1).replace(",", ""))
     assert n < 0.6 * limit
 
@@ -360,8 +411,10 @@ def test_task_json_fields_and_numbers():
     assert J["category"] == "Impact on jobs"
     assert J["instruction"] == T.INSTRUCTION
     s = J["scoring"]
-    for text in ("0.5 mm", "80 degrees", "20 N", "3 cm", "5 cm", "1 mm", "1 s", "0.25 turn", "2.5 mm of the screw's axis"):
+    for text in ("0.5 mm", "80 degrees", "20 N", "3 cm", "5 cm", "1 mm", "1 s", "0.25 turn", "2.5 mm of the screw's axis",
+                 "15 mm"):
         assert text in s, text
+    assert "14/2" in J["setup"] and "6 in" in J["setup"] and "78 mm" in J["setup"]
     assert "2-1/4 x 3-5/8 in" in J["setup"] and "1/2 in" in J["setup"]
     assert "Fasten small metal or plastic boxes to walls to house electrical switches or outlets." in J["context"]
 

@@ -2,7 +2,7 @@
 
     python mech_bench.py [--out bench_out]
 
-The box starts flush in the cut-out (its ears on the wall) and the arms stay at their ready poses. A steady torque is
+The bare box, without its cable, starts flush in the cut-out (its ears on the wall) and the arms stay at their ready poses. A steady torque is
 put on each clamp screw in turn, as a screwdriver would (the PhysX joint's effort), and the clamp's state is logged:
 the turns until its arm is swung out, until it touches the back of the drywall, and the force it presses with at
 each torque. Then the screw is turned back out one turn, and the box is pulled straight out with 20 N.
@@ -14,7 +14,10 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import sys
+
+os.environ.setdefault("OWB_NO_CABLE", "1")     # the bench is of the bare box: no cable, the box free
 from pathlib import Path
 
 import numpy as np

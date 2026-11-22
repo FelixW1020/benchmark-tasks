@@ -1,21 +1,25 @@
 """Scripted full-score demo for the old-work box task, run in the yam_arena embodiment (CPU PhysX).
 
     python demo.py task.py demo_out [--max-steps 6000] [--no-record] [--cam 640x352]
-    DEMO_CALIBRATE=1 python demo.py task.py cal_out --no-record     # prints the CAL numbers
+    DEMO_MODE=letgo python demo.py task.py out      # a control run: still, inside, box, top, nodown, letgo, pullout
+    DEMO_CALIBRATE=1 python demo.py task.py cal_out --no-record     # prints the CAL numbers for the screwdriver
 
-1. The left arm puts its closed fingers 25 mm into the box (lying on its back, open face up), opens them against the
-   box's side walls, lifts it, turns it to face the arms and pushes it into the cut-out until the ears are on the wall;
-   then it closes its fingers, draws back and goes home.
-2. The right arm takes the screwdriver from its block by the handle (fingers across it, pointing down along it), turns
+1. The box hangs on its cable in front of the cut-out. The left hand comes from the left with its fingers one above
+   the other, opened to 82 mm, and pushes the box into the cut-out by its two ears (one fingertip end on each); the
+   cable goes back into the wall ahead of the box.
+2. It draws back (the box springs out a few millimetres), closes its fingers and comes back lower and further round
+   to the left to hold the box against the wall by its bottom ear.
+3. The right arm takes the screwdriver from its block by the handle (fingers across it, pointing down along it), turns
    it to point at the wall and puts its tip into the top clamp screw.
-3. It drives the screw in wrist strokes, as a hand does: it lines the tip up with the screw, presses it in and feels
+4. It drives the screw in wrist strokes, as a hand does: it lines the tip up with the screw, presses it in and feels
    for the recess, turns the screwdriver 200 degrees clockwise about the tip, draws it out and turns back. It stops a
-   stroke once the clamp presses the drywall with 25 N (a hand feels the screw stall). Then the bottom screw.
-4. It stands the screwdriver back in its block, lets go, and goes home.
+   stroke once the clamp presses the drywall with 25 N (a hand feels the screw stall). With the top clamp tight the
+   left hand goes home. Then the bottom screw.
+5. It stands the screwdriver back in its block, lets go, and goes home.
 
-The box's moves are fixed: where it sits in the hand is measured once with DEMO_CALIBRATE=1 and fixed in CAL. The
-screwdriving is closed loop (as an eye and hand are): it reads the driver's tip, the box, the screw's angle and the
-clamp's force from the simulator. Writes one MP4 per camera, setup.png and result.json to the output folder.
+The left hand's moves are fixed, apart from taking out its own sag (read from its joint angles). The screwdriving is
+closed loop (as an eye and hand are): it reads the driver's tip, the box, the screw's angle and the clamp's force
+from the simulator. Writes one MP4 per camera, setup.png and result.json to the output folder.
 """
 
 from __future__ import annotations
@@ -145,18 +149,27 @@ def both(*gens):
 
 # Measured once with DEMO_CALIBRATE=1 (the layout is fixed and the simulation deterministic) and fixed here.
 CAL = {
-    "box_in_hand": (0.00221, -0.00285, 0.00074),     # the box's origin, in the left TCP's frame, after the lift, less as planned (m)
-    "box_turn_in_hand": (0.01131, 0.02071, 0.00961),  # the box's turn in the hand (rotation vector, TCP frame, rad) after the lift
     "driver_in_hand": (-0.00068, -0.00297, 0.00106),  # the driver's tip, in the right TCP's frame, after the lift, less as planned
-    "box_at_hole": (0.00047, 0.00253, -0.0098, 1.22975, -1.18538, 1.21862),               # the box in the hand held in front of the cut-out: origin (TCP frame, m) and
-                                        # turn (rotation vector, TCP frame); see script()
     "tip_at_screw": {"t": (-0.00564, 0.00085, 0.07825), "b": None},   # the driver's tip in the hand in front of each screw (TCP frame, m)
-    "push_past": 0.003,                 # the box is pushed this far past flush (m)
+    "push_past": 0.020,                 # pushing: the hand is sent this far past the ears flat on the wall (m); the cable pushes back and the arm gives
+    "hold_past": 0.020,                 # holding: the hand is sent this far past the bottom ear's face (about 6 N)
     "press_past": 0.005,                # the driver's tip is pressed this far past the recess floor (m)
 }
 CALIBRATE = bool(os.environ.get("DEMO_CALIBRATE"))
 _MEASURED: dict = {}
 
+MODE = os.environ.get("DEMO_MODE", "full")   # full | controls: still, inside, box, top, nodown, letgo, pullout
+PUSH_YAW = math.radians(-45.0)   # the pushing hand points at the wall from the left, 45 degrees off square
+PUSH_CLOSE = 1.0           # its fingers close along the vertical (one above the other)
+PUSH_Y = 0.016             # its fingertip ends meet the ears this far left of the screws (the cable's tail is on the right)
+PUSH_GRIP = 0.87           # opened to 82 mm between the pads: fingertip ends 43 mm above and below the box's middle
+PUSH_TILT = math.radians(0.0)    # the hand can be tipped forward by this, so that the upper fingertip leads
+HOLD_PITCH = math.radians(0.0)   # the holding hand is level
+HOLD_CLOSE = -1.0          # which way its fingers close (across, level; the wrist then sits at zero)
+HOLD_Y, HOLD_Z = 0.016, 0.044    # its closed fingertips meet the bottom ear this far left of and below the box's middle
+PULL_PUSH = 0.060          # control "pullout": the fingertips are sent this far into the cable where it leaves the box
+HOLD_YAW = math.radians(-50.0)   # and it points at the wall from the left, 50 degrees off square (clear of the screwdriver hand)
+PUSH_S = 6.0               # seconds for the push
 TIPS = 0.013               # the TCP sits this far short of the pad tips
 BOX_FINGERS_IN = 0.025     # the pad tips go this far into the box past its front face
 BOX_GRIP = 0.55            # the fingers opened to this (1 = 94 mm between the pads) press on the box's side walls
@@ -174,67 +187,93 @@ def script(task, ctx):
 
     L, R = ctx.left, ctx.right
     T = task
+    if MODE == "still":
+        yield from wait(10.0)
+        return
     ex, ez = np.array([1.0, 0, 0]), np.array([0, 0, 1.0])
     r_ins = cols((0, -1, 0), (1, 0, 0))                 # pointing at the wall, fingers closing across (wrist 0)
     r_pick = rot_axis((0, 1, 0), math.pi / 2) @ r_ins   # the same, turned to point down
     r_drive0 = rot_axis((1, 0, 0), -math.pi / 2 - STROKE_EXTRA) @ r_ins   # pointing at the wall (wrist -100)
-    r_box0 = bp.rotation(T.BOX_START_XYZW)
 
     def measure(key, value):
         if CALIBRATE:
             _MEASURED[key] = [round(float(v), 5) for v in value]
             print("CAL so far = " + json.dumps(_MEASURED), flush=True)
 
-    # 1. Left arm: closed fingers 25 mm into the box, open them against its side walls, lift it.
-    front = np.array(T.BOX_START) + r_box0 @ np.array([-bp.EAR_T, 0.0, 0.0])     # middle of its front face
-    tcp_in = front - (BOX_FINGERS_IN - TIPS) * ez
-    yield from L.move(tcp_in + 0.06 * ez, r_pick, 3.0, grip=0.0, label="over the box")
-    yield from L.move(tcp_in, r_pick, 1.5, label="fingers into the box")
-    yield from L.set_grip(BOX_GRIP, 1.0)
-    yield from wait(0.3)
-    lifted = tcp_in + 0.10 * ez
-    yield from L.move(lifted, r_pick, 1.5, label="lift it")
-    box_local = r_pick.T @ (np.array(T.BOX_START) + 0.10 * ez - lifted)           # planned: the box in the hand
-    if CALIBRATE:
-        s = ctx.states()["box"]
-        measure("box_in_hand", r_pick.T @ (s.pos - lifted) - box_local)
-        measure("box_turn_in_hand", rotvec(r_pick.T @ bp.rotation(s.quat_xyzw) @ (r_pick.T @ r_box0).T))
-    box_local = box_local + np.array(CAL["box_in_hand"])
-    # the hand turned so the box (turned in the hand by D) sits square to the wall: R_hand @ D @ r_pick^T r_box0 = I
-    d_turn = rot_axis(CAL["box_turn_in_hand"], np.linalg.norm(CAL["box_turn_in_hand"])) \
-        if np.linalg.norm(CAL["box_turn_in_hand"]) > 1e-9 else np.eye(3)
-    r_hold = (d_turn @ r_pick.T @ r_box0).T
-
-    # 2. Turn it to face the arms, line it up with the cut-out and push it in until the ears are on the wall.
-    def tcp_for_box(box_origin):
-        return np.asarray(box_origin, float) - r_hold @ box_local
-    yield from L.move(tcp_for_box(T.HOLE - 0.10 * ex) + 0.03 * ez, r_hold, 3.0, label="turn it to the wall")
-    yield from L.move(tcp_for_box(T.HOLE - 0.08 * ex), r_hold, 1.5, label="in front of the cut-out")
-    yield from wait(0.5)
-    # Held up there the box sags and turns in the soft hand: where it sits in the hand at this pose is measured
-    # (CAL "box_at_hole": its origin in the TCP frame and its turn there) and the hand set so the box is square.
-    if CALIBRATE:
-        s = ctx.states()["box"]
-        measure("box_at_hole", np.r_[r_hold.T @ (s.pos - L.pos), rotvec(r_hold.T @ bp.rotation(s.quat_xyzw))])
-    cal = np.asarray(CAL["box_at_hole"], float) if CAL["box_at_hole"] is not None else None
-    if cal is not None:
-        a_turn = rot_axis(cal[3:], np.linalg.norm(cal[3:])) if np.linalg.norm(cal[3:]) > 1e-9 else np.eye(3)
-        r_hold = a_turn.T                                     # hand turn H with H @ A = I
-
-        def tcp_for_box(box_origin):  # noqa: F811
-            return np.asarray(box_origin, float) - r_hold @ cal[:3]
-        yield from L.move(tcp_for_box(T.HOLE - 0.08 * ex), r_hold, 1.5, label="squared up")
+    if MODE == "inside":   # control: push the box in by a grip inside it, below the cable's line (it tips back)
+        front = np.array(T.BOX_START) + np.array([-bp.EAR_T, 0.0, -0.008])
+        tcp_in = front + (BOX_FINGERS_IN - TIPS) * ex
+        yield from L.move(tcp_in - 0.07 * ex + 0.02 * ez, r_ins, 3.0, grip=0.0, label="in front of the box")
+        yield from L.move(tcp_in - 0.07 * ex, r_ins, 1.0, label="level with it")
+        yield from L.move(tcp_in, r_ins, 2.0, label="fingers into the box")
+        yield from L.set_grip(BOX_GRIP, 1.0)
         yield from wait(0.5)
-    yield from L.move(tcp_for_box(T.HOLE + CAL["push_past"] * ex), r_hold, 4.0, label="push it in")
-    yield from wait(0.5)
-    yield from L.set_grip(0.0, 0.8)
-    yield from L.move(L.pos - 0.08 * ex, r_hold, 1.5, label="draw back")
-    left_home = L.move(*L.home, 3.0, grip=1.0, label="home")
+        yield from L.move(tcp_in + (bp.START_OUT + 0.02) * ex, r_ins, PUSH_S, label="push it in")
+        yield from wait(0.8)
+        _MEASURED["pushed_in"] = _snap(ctx, T) if ctx.live else None
+        yield from L.set_grip(0.0, 0.8)
+        yield from L.move(L.pos - 0.08 * ex, r_ins, 1.5, label="draw back")
+        yield from L.move(*L.home, 3.0, grip=1.0, label="home")
+        yield from wait(3.0)
+        return
+
+    # 1. Left arm: the box hangs on its cable in front of the cut-out. The hand comes from the left, turned so its
+    #    fingers are one above the other and opened so that one fingertip end meets the top ear and the other the
+    #    bottom ear, beside the screws (two points, so the box cannot tip back as the cable pushes on its top).
+    d_push = np.array([math.cos(PUSH_YAW), math.sin(PUSH_YAW), 0.0])              # the way the fingers point
+    r_push = rot_axis(np.cross(ez, d_push), -PUSH_TILT) @ cols((0, 0, PUSH_CLOSE), d_push)   # tipped: the top fingertip leads
+
+    def tcp_at(ear_x):   # the tool point with the fingertip ends on the ears' face at world x = ear_x
+        return np.array([ear_x, T.HOLE[1] + PUSH_Y, T.HOLE[2]]) - TIPS * d_push
+    x_ears0 = T.BOX_START[0] - bp.EAR_T
+    yield from L.move(tcp_at(x_ears0 - 0.05) + 0.02 * ez, r_push, 3.5, grip=PUSH_GRIP, label="in front of the box")
+    yield from L.move(tcp_at(x_ears0 - 0.05), r_push, 1.0, label="level with it")
+    yield from wait(0.3)
+    dz = 0.0
+    if ctx.live:   # the level hand sags: bring it back to the height planned (its own measured position)
+        dz = float(L.pos[2] - ctx.tcp("left")[2])
+        _MEASURED["hand_sag_mm"] = round(-1000 * dz, 2)
+        yield from L.move(tcp_at(x_ears0 - 0.05) + dz * ez, r_push, 0.8, label="sag taken out")
+    yield from L.move(tcp_at(x_ears0 - 0.006) + dz * ez, r_push, 1.5, label="fingertips at the ears")
+
+    # 2. Push it into the cut-out until the ears are on the wall (the cable goes back into the wall ahead of it), and
+    #    keep pushing: the bent cable springs back a little, so the box is held there until its first clamp is tight.
+    x_flush = T.XW - bp.EAR_T
+    yield from L.move(tcp_at(x_flush + CAL["push_past"]) + dz * ez, r_push, PUSH_S, label="push it in")
+    yield from wait(0.8)
+    _MEASURED["pushed_in"] = _snap(ctx, T) if ctx.live else None
+
+    # 3. Let go, the box springs back out a little (the bent cable's give), so it has to be held against the wall
+    #    while its first clamp is driven. The two-finger hand would be in the screwdriver's way: it draws back, closes,
+    #    and comes back lower and further round to the left to hold the box by its bottom ear with its fingertips.
+    yield from L.move(L.pos - 0.06 * d_push, r_push, 1.2, label="draw back")
+    d_hold = np.array([math.cos(HOLD_PITCH) * math.cos(HOLD_YAW), math.cos(HOLD_PITCH) * math.sin(HOLD_YAW),
+                       math.sin(HOLD_PITCH)])
+    x_hold = np.cross(ez, d_hold) / np.linalg.norm(np.cross(ez, d_hold))
+    r_hold = cols(HOLD_CLOSE * x_hold, d_hold)
+
+    def tcp_hold(ear_x):   # the tool point with the closed fingertips on the bottom ear's face at world x = ear_x
+        return np.array([ear_x, T.HOLE[1] + HOLD_Y, T.HOLE[2] - HOLD_Z]) - TIPS * d_hold
+    yield from L.move(tcp_hold(x_flush - 0.06), r_hold, 3.0, grip=0.0, label="beside the box")
+    yield from L.move(tcp_hold(x_flush + CAL["hold_past"]), r_hold, 2.5, label="hold it by the bottom ear")
+    yield from wait(0.8)
+    _MEASURED["held"] = _snap(ctx, T) if ctx.live else None
+
+    def left_away():
+        yield from L.move(L.pos - 0.08 * d_hold, r_hold, 1.5, label="draw back")
+        yield from L.move(*L.home, 3.0, grip=1.0, label="home")
+    if MODE == "box":      # control: hold, then let go without driving a screw
+        yield from wait(2.0)
+        yield from left_away()
+        yield from wait(3.0)
+        return
+    if MODE == "letgo":    # control: the hand leaves before any clamp is tight
+        yield from left_away()
 
     # 3. Right arm: take the screwdriver from its block by the handle, pointing down along it.
     handle_low = np.array(T.DRIVER_START) + bp.SHAFT_TOP * ez
     tcp_d = handle_low + DRIVER_TCP_UP * ez
-    yield from both(left_home, R.move(tcp_d + 0.06 * ez, r_pick, 3.0, grip=DRIVER_GRIP_OPEN, label="over the driver"))
+    yield from R.move(tcp_d + 0.06 * ez, r_pick, 3.0, grip=DRIVER_GRIP_OPEN, label="over the driver")
     yield from R.move(tcp_d, r_pick, 1.5, label="round its handle")
     yield from R.set_grip(0.0, 0.8)
     yield from wait(0.3)
@@ -373,13 +412,42 @@ def script(task, ctx):
         yield from R.move(R.pos - 0.03 * ex, R.rot, 1.0, label="tip out, done")
         yield from R.turn(j6_start - float(R.q[5]), 1.2)                        # the wrist back
         yield from R.move(tcp_for_tip(out - 0.03 * ex, r_drive0), r_drive0, 1.5, label="hand square again")
+        if t == "t" and MODE != "letgo":   # the top clamp holds the box now: the left hand lets go and goes home
+            yield from left_away()
+        if t == "t" and MODE == "top":     # control: stop after the first screw
+            yield from wait(2.0)
+            return
+
+    if MODE == "nodown":   # control: both clamps tight, the screwdriver kept in the hand
+        yield from wait(3.0)
+        return
 
     # 5. Stand the screwdriver back in its block, let go, go home.
     yield from R.move(tcp_d + 0.10 * ez, r_pick, 3.5, label="over the block")
+    if MODE == "pullout":   # control: with the box clamped, the left fingertips push the cable back through the box
+        c0 = np.array([T.XW - bp.EAR_T - 0.016, T.HOLE[1] + bp.CABLE_Y, T.HOLE[2] + bp.CABLE_Z])   # where it leaves the box
+        yield from L.move(c0 - 0.06 * d_hold - TIPS * d_hold, r_hold, 3.5, grip=0.0, label="beside the cable")
+        yield from L.move(c0 - TIPS * d_hold, r_hold, 1.5, label="at the cable")
+        yield from L.move(c0 + PULL_PUSH * ex - TIPS * d_hold, r_hold, 5.0, label="push the cable back into the box")
+        yield from wait(0.5)
+        _MEASURED["cable_pushed"] = _snap(ctx, T) if ctx.live else None
+        yield from L.move(c0 - 0.06 * d_hold - TIPS * d_hold, r_hold, 2.0, label="draw back")
+        yield from L.move(*L.home, 3.0, grip=1.0, label="home")
     yield from R.move(tcp_d + 0.004 * ez, r_pick, 2.0, label="into the block")
     yield from R.set_grip(DRIVER_GRIP_OPEN, 0.8)
     yield from R.move(tcp_d + 0.08 * ez, r_pick, 1.5, label="up off it")
     yield from R.move(*R.home, 3.0, grip=1.0, label="home")
+
+
+def _snap(ctx, T):
+    """The box as the simulator has it: ear gaps (mm), its origin less the cut-out's (mm), cable fed (mm)."""
+    import boxparts as bp
+    b = ctx.states()["box"]
+    r = bp.rotation(b.quat_xyzw)
+    return {"gaps_mm": np.round(1000 * T.ear_gaps(b.pos, r), 2).tolist(),
+            "tipped_deg": round(math.degrees(math.acos(max(-1.0, min(1.0, float(r[0, 0]))))), 1),
+            "box_minus_hole_mm": np.round(1000 * (b.pos - np.asarray(T.HOLE)), 2).tolist(),
+            "cable_fed_mm": round(1000 * bp.cable_fed(b.joints), 1)}
 
 
 def offline_plan(task):
@@ -411,6 +479,16 @@ class Ctx:
 
         return object_states(self.emb._env, self.emb.task.names)
 
+    def tcp(self, arm: str):
+        """Where the arm's tool point is now, from its own joint angles (proprioception)."""
+        from yam_arena import ik
+        import boxparts as bp
+
+        robot = self.emb._env.unwrapped.scene[f"{arm}_robot"]
+        q = bp.as_numpy(robot.data.joint_pos)[0][:6]
+        a = self.left if arm == "left" else self.right
+        return ik.tcp_pose(q, a.base)[0]
+
     def action(self):
         from inspect_robots.types import Action
         from inspect_robots_yam.packing import pack
@@ -439,6 +517,16 @@ def run(task_path: str, out_dir: str, max_steps: int = 6000, record: bool = True
     obs = emb.reset(Scene(id="demo", instruction=emb.task.module.INSTRUCTION))
     task = emb.task.module
     ctx = Ctx(emb)
+    try:   # the start as the simulator has it: the box, and the cable's bent hinges
+        import boxparts as bp
+        obj = emb._env.unwrapped.scene["box"]
+        q0 = dict(zip(obj.joint_names, bp.as_numpy(obj.data.joint_pos)[0].round(4).tolist()))
+        b0 = ctx.states()["box"]
+        _MEASURED["start"] = {"box_minus_planned_mm": np.round(1000 * (b0.pos - np.array(task.BOX_START)), 2).tolist(),
+                              "box_quat_xyzw": np.round(b0.quat_xyzw, 4).tolist(),
+                              "hinges": {k: v for k, v in q0.items() if k[0] == "h" or k in ("feed", "twist", "roll", "yaw")}}
+    except Exception as e:  # noqa: BLE001
+        _MEASURED["start_error"] = repr(e)
     gen = script(task, ctx)
     frames: dict[str, list] = {}
 
@@ -461,7 +549,12 @@ def run(task_path: str, out_dir: str, max_steps: int = 6000, record: bool = True
             first_full = steps
         snap(res.observation)
         if steps % 100 == 0:
-            print(f"step {steps} score {info.get('score')}", flush=True)
+            inf = getattr(task, "_EP", {}).get("info", {})
+            m = inf.get("mech", {})
+            print(f"step {steps} score {info.get('score')} gaps {inf.get('gaps_mm')} fed {inf.get('cable_fed_mm')} "
+                  + " ".join(f"{t}: turns {m[t]['turns']:.2f} swing {m[t]['swing']:.0f} F {m[t]['force']:.0f}" for t in m)
+                  + f" eng {inf.get('engaged')} L {[e[2] for e in ctx.left.ends][-1:]} R {[e[2] for e in ctx.right.ends][-1:]}",
+                  flush=True)
         if res.terminated:
             success = res.termination_reason == "success"
             break
@@ -469,7 +562,21 @@ def run(task_path: str, out_dir: str, max_steps: int = 6000, record: bool = True
             break
     # The trial's score is what the task file's score() reported on the last step; never set here.
     final = float(info.get("score", 0.0) or 0.0)
-    result = {"task_score": final, "success": success, "steps": steps, "first_full_score_step": first_full,
+    last = dict(getattr(task, "_EP", {}).get("info", {}))
+    for k in ("mech",):
+        last.pop(k, None)
+    try:
+        obj = emb._env.unwrapped.scene["box"]
+        q1 = dict(zip(obj.joint_names, bp.as_numpy(obj.data.joint_pos)[0].round(4).tolist()))
+        b1 = ctx.states()["box"]
+        _MEASURED["finish"] = {"box_minus_hole_mm": np.round(1000 * (b1.pos - np.asarray(task.HOLE)), 2).tolist(),
+                               "box_quat_xyzw": np.round(b1.quat_xyzw, 4).tolist(),
+                               "hinges": {k: v for k, v in q1.items() if k[0] == "h" or k in ("feed", "twist", "roll", "yaw")}}
+    except Exception as e:  # noqa: BLE001
+        _MEASURED["finish_error"] = repr(e)
+    result = {"mode": MODE, "task_score": final, "success": success, "steps": steps, "first_full_score_step": first_full,
+              "end": json.loads(json.dumps(last, default=lambda o: o.tolist() if hasattr(o, "tolist") else str(o))),
+              "measured": _MEASURED,
               "script_ended_step": ended,
               "worst_ik_mm": {"left": round(ctx.left.worst_mm, 2), "right": round(ctx.right.worst_mm, 2)}}
     if CALIBRATE:

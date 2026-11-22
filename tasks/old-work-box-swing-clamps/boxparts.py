@@ -36,6 +36,7 @@ import importlib.machinery
 import importlib.util
 import inspect
 import math
+import os
 import sys
 import tempfile
 from dataclasses import dataclass
@@ -81,6 +82,7 @@ ARM_FLEX = 3.0 * MM                # the arm's spring travel (120 N at full trav
 MASS = {"body": 0.0511, "screw": 0.0012, "nut": 0.0002, "slide": 0.0002, "wing": 0.0012}
 SCREW_ARMATURE = 2.0e-6            # kg m^2: the screw and hub (light; a heavier armature makes the tip bounce off)
 LINK_ARMATURE = 1.0e-3
+CABLE_ARMATURE = {"hinge": 1.0e-4, "twist": 1.0e-4, "roll": 1.0e-4, "yaw": 1.0e-4, "feed": 1.0e-2}   # kg m^2; kg for the feed
 
 # -- the screwdriver: a #2 Phillips stubby (38 mm blade, 6 mm shaft, 30 mm octagonal handle 50 mm long, 92 mm overall)
 TIP_LEN = 4.0 * MM
@@ -92,12 +94,163 @@ DRIVER_MASS = 0.050
 BLOCK = (50.0 * MM, 50.0 * MM, 44.0 * MM)
 BLOCK_HOLE = 10.0 * MM
 
+# -- the cable: 14/2 NM-B with ground, fed into the box before the box goes into the wall ------------------------------
+# It comes down inside the stud bay from a hole in the top plate, out through the cut-out and in through a port in the
+# top of the box's back wall; inside it runs under the box's top wall to the front, and its tail is bent up in front
+# of the top ear. Copper holds a bend, so every bend is a hinge with friction (the cable's plastic moment), not a
+# spring. All of it is in the box's articulation, rooted at the top plate: anchor - twist - links on hinges - the
+# long link through the box ("ce") - yaw - roll - feed (the entry's clamp: a sliding joint with friction) - the box.
+CABLE = not bool(os.environ.get("OWB_NO_CABLE"))     # OWB_NO_CABLE=1: the bare box (the clamp bench)
+CABLE_W, CABLE_T = 0.372 * IN, 0.176 * IN            # maker's nominal 0.372 x 0.176 in (9.4 x 4.5 mm)
+CABLE_KG_M = 0.091                                    # 61 lb per 1,000 ft
+CABLE_Y, CABLE_Z = -17.0 * MM, 30.0 * MM             # the port's centre in the back wall (box frame)
+PORT_HW, PORT_HH = CABLE_W / 2 + 1.3 * MM, CABLE_T / 2 + 1.2 * MM
+CE_FRONT, CE_REAR = -EAR_T - 5.0 * MM, DEPTH + 10.0 * MM   # the long link: 5 mm in front of the rim to 10 mm behind the back
+LINK, N_LINKS = 14.63 * MM, 13                        # the links between the box and the top plate
+N_BACK, N_BEND = 3, 4                                 # start shape: 3 links straight back from the box, 4 bends of 22.5 degrees, the rest straight up
+STUB = 10.0 * MM                                      # the anchor: a stub of cable hanging out of the top plate
+FED = 6.0 * IN                                        # cable past the back wall's inner face: 152 mm (6 in)
+TAIL_R = 12.0 * MM                                    # the tail: a quarter bend of this radius, then straight up
+TAIL_UP = FED - (DEPTH - WALL - CE_FRONT) - math.pi / 2 * TAIL_R   # 61 mm
+START_OUT = 78.0 * MM                                 # the box starts with its ears' back faces this far in front of the wall
+M_PLASTIC = 0.12                                      # N m: the cable's bending (plastic) moment; estimate, see README
+K_BEND = 8.0                                          # N m/rad per hinge: the cable's elastic bending, EI / LINK (EI 0.11 N m^2)
+F_CLAMP = 8.0                                         # N: the entry's grip on the cable; estimate
+K_FEED = 2.0e4                                        # N/m: the clamp's give before the cable slips in it (0.4 mm)
+K_TWIST, K_ROLL, K_YAW = 0.65, 0.5, 30.0              # N m/rad: the cable's torsion (anchor, entry) and edgewise bend; estimates
+FEED_LIMITS = (-60.0 * MM, 30.0 * MM)                 # feed: negative is cable drawn out of the box
+CABLE_LINKS = [f"c{k}" for k in range(1, N_LINKS + 1)]
+CABLE_BODIES = ["anchor"] + CABLE_LINKS + ["ce", "ey", "er", "t1", "t2"]
+
+
+def cable_path_hanging() -> list[np.ndarray]:
+    """The cable's centre line behind the box as it hangs at the start, as points (x, z) in the box's frame, from the
+    rear end of the long link out to the top of the anchor stub: three links straight back, four bends of 22.5
+    degrees, seven links straight up, the stub."""
+    p = np.array([CE_REAR, CABLE_Z])
+    pts = [p.copy()]
+    for k in range(N_LINKS, 0, -1):                       # c13 (next to the long link) ... c1 (next to the anchor)
+        bends = min(N_BEND, max(0, (N_LINKS - N_BACK) - k + 1))
+        a = bends * math.pi / 2 / N_BEND
+        p = p + LINK * np.array([math.cos(a), math.sin(a)])
+        pts.append(p.copy())
+    pts.append(p + np.array([0.0, STUB]))
+    return pts
+
+
+def cable_path() -> list[np.ndarray]:
+    """The same centre line with no weight on it, which is the joints' zero: each hinge is bent up by the wind-up
+    that the hanging weight takes out again (cable_windup), so that the loaded cable hangs as cable_path_hanging()."""
+    pts = [p.copy() for p in cable_path_hanging()]
+    wind = cable_windup()
+    for m in range(N_LINKS):                              # the hinge at pts[m] is h_(N - m)
+        a = wind[f"h{N_LINKS - m}"]
+        c, sn = math.cos(a), math.sin(a)
+        for i in range(m + 1, len(pts)):
+            dx, dz = pts[i] - pts[m]
+            pts[i] = pts[m] + np.array([dx * c - dz * sn, dx * sn + dz * c])
+    return pts
+
+
+def _strip(body: str, p0, p1, look="cable", material="cable", gap=0.4 * MM) -> "Shape":
+    """A straight piece of cable between two points (x, z) of the box's frame (a loft along y; profile (z, x))."""
+    p0, p1 = np.asarray(p0, float), np.asarray(p1, float)
+    d = (p1 - p0) / np.linalg.norm(p1 - p0)
+    nrm = np.array([-d[1], d[0]])
+    q = [p0 + gap * d + nrm * CABLE_T / 2, p0 + gap * d - nrm * CABLE_T / 2, p1 - gap * d - nrm * CABLE_T / 2,
+         p1 - gap * d + nrm * CABLE_T / 2]
+    return loft(body, look, material, "Y", CABLE_Y - CABLE_W / 2, [(float(v[1]), float(v[0])) for v in q],
+                CABLE_Y + CABLE_W / 2)
+
+
+def _tail_point(phi: float) -> tuple[float, float]:
+    """The tail's centre line (x, z) a turn ``phi`` round its quarter bend (0: leaving the long link; pi/2: going up)."""
+    return CE_FRONT - TAIL_R * math.sin(phi), CABLE_Z + TAIL_R * (1.0 - math.cos(phi))
+
+
+def cable_shapes() -> list["Shape"]:
+    pts = cable_path()
+    s = [_strip("anchor", pts[-2], pts[-1], material=None)]
+    for k in range(1, N_LINKS + 1):                       # c_k runs from pts[N - k] to pts[N - k + 1]
+        s.append(_strip(f"c{k}", pts[N_LINKS - k], pts[N_LINKS - k + 1]))
+    s.append(_strip("ce", (CE_FRONT, CABLE_Z), (CE_REAR, CABLE_Z)))
+    n = 3
+    for i in range(n):                                    # the tail's quarter bend: three straight pieces
+        s.append(_strip("t1", _tail_point(i * math.pi / 2 / n), _tail_point((i + 1) * math.pi / 2 / n), gap=0.0))
+    xt, zt = _tail_point(math.pi / 2)
+    s.append(_strip("t2", (xt, zt), (xt, zt + TAIL_UP)))
+    return s
+
+
+def cable_joints() -> list[dict]:
+    """The cable's joints, root (the anchor at the top plate) first. Every body shares the box's frame at joint zero,
+    and joint zero is the start: the box hanging square in front of the cut-out, the cable bent as cable_path()."""
+    pts = cable_path()
+    y = CABLE_Y
+    hinge = dict(type="rev", axis="Y", lo=-80.0, hi=80.0, group="hinge")
+    out = [dict(name="twist", parent="anchor", child="c1", anchor=(pts[-2][0], y, pts[-2][1]), type="rev", axis="Z",
+                lo=-40.0, hi=40.0, group="twist")]
+    for k in range(1, N_LINKS):                           # h_k: between c_k and c_(k+1), at pts[N - k]
+        out.append(dict(name=f"h{k}", parent=f"c{k}", child=f"c{k + 1}", anchor=(pts[N_LINKS - k][0], y, pts[N_LINKS - k][1]),
+                        **hinge))
+    out.append(dict(name=f"h{N_LINKS}", parent=f"c{N_LINKS}", child="ce", anchor=(CE_REAR, y, CABLE_Z), **hinge))
+    port = (DEPTH, y, CABLE_Z)
+    xt, zt = _tail_point(math.pi / 2)
+    out += [dict(name="yaw", parent="ce", child="ey", anchor=port, type="rev", axis="Z", lo=-3.0, hi=3.0, group="yaw"),
+            dict(name="roll", parent="ey", child="er", anchor=port, type="rev", axis="X", lo=-25.0, hi=25.0, group="roll"),
+            dict(name="feed", parent="er", child="body", anchor=port, type="pri", axis="X", lo=FEED_LIMITS[0],
+                 hi=FEED_LIMITS[1], group="feed"),
+            dict(name="tail1", parent="ce", child="t1", anchor=(CE_FRONT, y, CABLE_Z), type="rev", axis="Y", lo=-45.0,
+                 hi=45.0, group="hinge"),
+            dict(name="tail2", parent="t1", child="t2", anchor=(xt, y, zt), type="rev", axis="Y", lo=-45.0, hi=45.0,
+                 group="hinge")]
+    return out
+
+
+def cable_spawn(box_origin) -> tuple[tuple, tuple]:
+    """Where the articulation is spawned (its frame is the box's frame at joint zero, the cable unloaded) so that the
+    cable's anchor is at the hole in the top plate and the loaded box hangs with its origin at ``box_origin`` (world),
+    square to the wall: (position, quaternion XYZW)."""
+    phi = sum(cable_windup().values())                    # the unloaded box is tipped up by this much
+    c, sn = math.cos(phi), math.sin(phi)
+    rot = np.array([[c, 0.0, sn], [0.0, 1.0, 0.0], [-sn, 0.0, c]])
+    x, z = cable_path()[-1]
+    pos = cable_anchor_point(box_origin) - rot @ np.array([x, CABLE_Y, z])
+    return tuple(float(v) for v in pos), (0.0, math.sin(phi / 2), 0.0, math.cos(phi / 2))
+
+
+def cable_anchor_point(box_origin) -> np.ndarray:
+    """The world point where the cable leaves the top plate (the top of the anchor stub)."""
+    x, z = cable_path_hanging()[-1]
+    return np.asarray(box_origin, float) + np.array([x, CABLE_Y, z])
+
+
+def cable_windup() -> dict:
+    """The elastic wind-up (rad) of each hinge under the weight that hangs from it at the start."""
+    g = 9.81
+    pts = cable_path_hanging()
+    com = {"body": np.array([0.030, 0.0]), "ce": np.array([(CE_FRONT + CE_REAR) / 2, CABLE_Z]),
+           "t1": np.array([CE_FRONT - 0.6 * TAIL_R, CABLE_Z + 0.4 * TAIL_R]),
+           "t2": np.array([_tail_point(math.pi / 2)[0], _tail_point(math.pi / 2)[1] + TAIL_UP / 2])}
+    mass = {"body": BOX_MASS, "ce": mass_of("ce"), "t1": mass_of("t1"), "t2": mass_of("t2")}
+    for k in range(1, N_LINKS + 1):
+        com[f"c{k}"] = (pts[N_LINKS - k] + pts[N_LINKS - k + 1]) / 2
+        mass[f"c{k}"] = mass_of(f"c{k}")
+    out = {}
+    for k in range(1, N_LINKS + 1):                       # h_k is at pts[N - k]
+        down = [f"c{i}" for i in range(k + 1, N_LINKS + 1)] + ["ce", "body", "t1", "t2"]
+        tau = g * sum(mass[b] * (com[b][0] - pts[N_LINKS - k][0]) for b in down)     # about the world's +y (negative)
+        out[f"h{k}"] = -tau / K_BEND
+    return out
+
+
 MATERIALS = {  # static, dynamic friction, combine mode
     "gypsum": (0.5, 0.45, "average"),
     "wood": (0.5, 0.45, "average"),
     "pvc": (0.4, 0.35, "average"),
     "steel": (0.25, 0.2, "average"),        # the driver's tip in the screw's recess
     "handle": (0.9, 0.8, "average"),        # the driver's two-component handle
+    "cable": (0.5, 0.45, "average"),        # the cable's PVC jacket
 }
 LOOKS = {  # sRGB, roughness, metallic
     "drywall": ((0.90, 0.89, 0.86), 0.9, 0.0),
@@ -111,6 +264,7 @@ LOOKS = {  # sRGB, roughness, metallic
     "yellow": ((0.95, 0.78, 0.10), 0.5, 0.0),
     "beech": ((0.80, 0.66, 0.48), 0.7, 0.0),
     "dark": ((0.05, 0.05, 0.05), 0.9, 0.0),
+    "cable": ((0.96, 0.96, 0.93), 0.6, 0.0),
 }
 CONTACT_OFFSET = 0.5 * MM
 
@@ -249,7 +403,12 @@ def box_shapes() -> list[Shape]:
         s.append(_end_wall(sign, SLOT_X[0], SLOT_X[1], -hw0, SLOT_Y[0]))   # the arm's stop is this piece's edge
         s.append(_end_wall(sign, SLOT_X[0], SLOT_X[1], SLOT_Y[1], hw0))
     hw, hh = BODY_BACK
-    s.append(box("body", "blue", "pvc", (xb, -hw, -hh), (DEPTH, hw, hh)))  # back
+    if CABLE:   # the back, with the cable's port in it
+        y0, y1, z0, z1 = CABLE_Y - PORT_HW, CABLE_Y + PORT_HW, CABLE_Z - PORT_HH, CABLE_Z + PORT_HH
+        s += [box("body", "blue", "pvc", (xb, -hw, -hh), (DEPTH, hw, z0)), box("body", "blue", "pvc", (xb, -hw, z1), (DEPTH, hw, hh)),
+              box("body", "blue", "pvc", (xb, -hw, z0), (DEPTH, y0, z1)), box("body", "blue", "pvc", (xb, y1, z0), (DEPTH, hw, z1))]
+    else:
+        s.append(box("body", "blue", "pvc", (xb, -hw, -hh), (DEPTH, hw, hh)))  # back
     for sign, tag in ((1, "t"), (-1, "b")):
         s += _clamp_shapes(sign, tag)
     return s
@@ -341,7 +500,23 @@ def shapes_of(kind: str) -> list[Shape]:
 
 
 def bodies_of(kind: str) -> list[str]:
-    return BOX_BODIES if kind == "box" else (["driver"] if kind == "driver" else ["body"])
+    if kind == "box":
+        return (CABLE_BODIES if CABLE else []) + BOX_BODIES
+    return ["driver"] if kind == "driver" else ["body"]
+
+
+def mass_of(body: str) -> float:
+    if body in ("anchor", "ey", "er"):
+        return 0.0005
+    if body in CABLE_LINKS:
+        return CABLE_KG_M * LINK
+    if body == "ce":
+        return CABLE_KG_M * (CE_REAR - CE_FRONT)
+    if body == "t1":
+        return CABLE_KG_M * math.pi / 2 * TAIL_R
+    if body == "t2":
+        return CABLE_KG_M * TAIL_UP
+    return MASS[body.split("_")[0]]
 
 
 def bounds(kind: str) -> tuple[np.ndarray, np.ndarray]:
@@ -394,6 +569,12 @@ def mechanism(q: dict) -> dict:
     return out
 
 
+def cable_fed(q: dict) -> float:
+    """How much cable (m) is through the entry, measured along it from the back wall's inner face to its end: FED at
+    the start, less whatever has been drawn back out of the box."""
+    return FED + float(q.get("feed", 0.0))
+
+
 # -- USD (after the simulator has started) -----------------------------------------------------------------------------
 
 _USD_DIR: Path | None = None
@@ -432,7 +613,7 @@ def _loft_mesh(sh: Shape):
     return pts, counts, idx
 
 
-def write_usd(kind: str, path: Path, fixed: bool) -> Path:
+def write_usd(kind: str, path: Path, fixed: bool, pose=None) -> Path:
     from pxr import Gf, Sdf, Usd, UsdGeom, UsdPhysics, UsdShade, Vt
     stage = Usd.Stage.CreateNew(str(path))
     UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.z)
@@ -468,8 +649,8 @@ def write_usd(kind: str, path: Path, fixed: bool) -> Path:
             continue
         UsdPhysics.RigidBodyAPI.Apply(prim)
         m = UsdPhysics.MassAPI.Apply(prim)
-        m.CreateMassAttr(MASS[b.split("_")[0]] if jointed else DRIVER_MASS)
-        if jointed and b.split("_")[0] in ("nut", "slide"):     # no colliders: give them an inertia
+        m.CreateMassAttr(mass_of(b) if jointed else DRIVER_MASS)
+        if jointed and (b.split("_")[0] in ("nut", "slide") or b in ("anchor", "ey", "er")):     # no colliders: give them an inertia
             m.CreateDiagonalInertiaAttr(Gf.Vec3f(1e-9, 1e-9, 1e-9))
             m.CreateCenterOfMassAttr(Gf.Vec3f(0.0, 0.0, 0.0))
         _apply(prim, "PhysxRigidBodyAPI", {
@@ -478,7 +659,7 @@ def write_usd(kind: str, path: Path, fixed: bool) -> Path:
             "physxRigidBody:maxDepenetrationVelocity": 0.3,
             "physxRigidBody:enableCCD": False,
         })
-    for i, sh in enumerate(shapes_of(kind)):
+    for i, sh in enumerate(shapes_of(kind) + (cable_shapes() if jointed and CABLE else [])):
         parent = body_paths[sh.body]
         if sh.kind == "loft":
             geom = UsdGeom.Mesh.Define(stage, f"{parent}/loft_{i}")
@@ -552,6 +733,37 @@ def write_usd(kind: str, path: Path, fixed: bool) -> Path:
             drive.CreateTargetPositionAttr(0.0)
             _apply(joint.GetPrim(), "PhysxJointAPI",
                    {"physxJoint:armature": SCREW_ARMATURE if name.startswith("screw") else LINK_ARMATURE})
+        if CABLE:
+            for j in cable_joints():
+                jp = f"/Part/joints/{j['name']}"
+                joint = (UsdPhysics.RevoluteJoint if j["type"] == "rev" else UsdPhysics.PrismaticJoint).Define(stage, jp)
+                joint.CreateBody0Rel().SetTargets([Sdf.Path(body_paths[j["parent"]])])
+                joint.CreateBody1Rel().SetTargets([Sdf.Path(body_paths[j["child"]])])
+                joint.CreateAxisAttr(j["axis"])
+                joint.CreateLowerLimitAttr(j["lo"])
+                joint.CreateUpperLimitAttr(j["hi"])
+                joint.CreateLocalPos0Attr(Gf.Vec3f(*j["anchor"]))
+                joint.CreateLocalPos1Attr(Gf.Vec3f(*j["anchor"]))
+                joint.CreateLocalRot0Attr(ident)
+                joint.CreateLocalRot1Attr(ident)
+                drive = UsdPhysics.DriveAPI.Apply(joint.GetPrim(), "angular" if j["type"] == "rev" else "linear")
+                drive.CreateTypeAttr("force")
+                k = {"twist": K_TWIST, "roll": K_ROLL, "yaw": K_YAW}.get(j["group"], 0.0)
+                drive.CreateStiffnessAttr(k * math.pi / 180.0)      # USD angular drives are per degree
+                drive.CreateDampingAttr(0.0)
+                drive.CreateTargetPositionAttr(0.0)
+                _apply(joint.GetPrim(), "PhysxJointAPI", {"physxJoint:armature": CABLE_ARMATURE[j["group"]]})
+            # the anchor is fixed in the world where the part is spawned (the hole in the top plate)
+            fx = UsdPhysics.FixedJoint.Define(stage, "/Part/joints/anchor_fixed")
+            fx.CreateBody1Rel().SetTargets([Sdf.Path(body_paths["anchor"])])
+            p, qx = pose
+            fx.CreateLocalPos0Attr(Gf.Vec3f(*[float(v) for v in p]))
+            fx.CreateLocalRot0Attr(Gf.Quatf(float(qx[3]), float(qx[0]), float(qx[1]), float(qx[2])))
+            fx.CreateLocalPos1Attr(Gf.Vec3f(0, 0, 0))
+            fx.CreateLocalRot1Attr(ident)
+            # the long link runs through the box (its port, under its top wall): it is held there by its joints
+            fp = UsdPhysics.FilteredPairsAPI.Apply(stage.GetPrimAtPath(body_paths["ce"]))
+            fp.CreateFilteredPairsRel().SetTargets([Sdf.Path(body_paths["body"])])
         for t in ("t", "b"):
             # the thread: hub angle on the screw (deg) + gearing * travel along it (m) = 0, i.e. the hub turned
             # -360 degrees on the screw (the screw turned one turn clockwise in a held hub) moves it LEAD toward
@@ -565,13 +777,13 @@ def write_usd(kind: str, path: Path, fixed: bool) -> Path:
     return path
 
 
-def usd_file(kind: str, fixed: bool) -> str:
+def usd_file(kind: str, fixed: bool, pose=None) -> str:
     global _USD_DIR
     if _USD_DIR is None:
         _USD_DIR = Path(tempfile.mkdtemp(prefix="owb_parts_"))
     path = _USD_DIR / f"{kind}{'_fixed' if fixed else ''}.usda"
     if not path.exists():
-        write_usd(kind, path, fixed)
+        write_usd(kind, path, fixed, pose)
     return str(path)
 
 
@@ -605,11 +817,27 @@ def arena_object(spec: Part):
                                              armature=LINK_ARMATURE),
             }
             cfg.init_state.joint_pos = {".*": 0.0}
+            if CABLE:
+                cfg.actuators.update({
+                    # a bend is elastic up to the plastic moment and then gives: a stiff spring whose torque is
+                    # capped at M_PLASTIC; its set angle follows the joint once it has given (_cable_follow)
+                    "hinges": ImplicitActuatorCfg(joint_names_expr=["h[0-9]+", "tail[0-9]"], stiffness=K_BEND, damping=0.01,
+                                                  armature=CABLE_ARMATURE["hinge"], effort_limit_sim=M_PLASTIC),
+                    "twist": ImplicitActuatorCfg(joint_names_expr=["twist"], stiffness=K_TWIST, damping=0.01,
+                                                 armature=CABLE_ARMATURE["twist"]),
+                    "roll": ImplicitActuatorCfg(joint_names_expr=["roll"], stiffness=K_ROLL, damping=0.01,
+                                                armature=CABLE_ARMATURE["roll"]),
+                    "yaw": ImplicitActuatorCfg(joint_names_expr=["yaw"], stiffness=K_YAW, damping=0.02,
+                                               armature=CABLE_ARMATURE["yaw"]),
+                    # the entry's clamp: the same, along the cable (grips up to F_CLAMP, then the cable slips)
+                    "feed": ImplicitActuatorCfg(joint_names_expr=["feed"], stiffness=K_FEED, damping=20.0,
+                                                armature=CABLE_ARMATURE["feed"], effort_limit_sim=F_CLAMP),
+                })
             return cfg
 
     pose = Pose(position_xyz=tuple(spec.pos), rotation_xyzw=tuple(spec.quat))
     fixed = spec.mass is None
-    cfg = sim_utils.UsdFileCfg(usd_path=usd_file(spec.kind, fixed))
+    cfg = sim_utils.UsdFileCfg(usd_path=usd_file(spec.kind, fixed, (spec.pos, spec.quat)))
     if spec.kind == "box":
         cfg.articulation_props = sim_utils.ArticulationRootPropertiesCfg(enabled_self_collisions=True,
                                                                          solver_position_iteration_count=64,
@@ -645,6 +873,9 @@ def part_state(env, name: str) -> PartState:
         obj = base.scene[name]
         data = obj.data
         pose = as_numpy(data.root_link_pose_w if hasattr(data, "root_link_pose_w") else data.root_pose_w)[0]
+        if spec.kind == "box" and CABLE:     # the articulation's root is the cable's anchor: read the box's own body
+            names = [n.rsplit("/", 1)[-1] for n in obj.body_names]
+            pose = as_numpy(data.body_link_pose_w)[0][names.index("body")]
         pos, quat = pose[:3] - origin, pose[3:7]
         vel = as_numpy(data.root_com_vel_w)[0] if hasattr(data, "root_com_vel_w") else np.zeros(6)
         lin, ang = vel[:3], vel[3:6]
@@ -696,6 +927,32 @@ def on_step(fn):
     return fn
 
 
+_CABLE_SET: dict = {}
+
+
+def _cable_follow(env) -> None:
+    """The cable's plastic bends and the clamp's slip, once a control step: each hinge's set angle (and the clamp's
+    set position) stays where it was while the joint is within its elastic give of it, and is dragged along once the
+    joint has been forced further (the drive's torque is capped at the plastic moment, so it gives)."""
+    if not CABLE or "box" not in _SPECS:
+        return
+    import torch
+
+    obj = env.unwrapped.scene["box"]
+    names = list(obj.joint_names)
+    q = as_numpy(obj.data.joint_pos)[0]
+    if "ids" not in _CABLE_SET:
+        hinge = [i for i, n in enumerate(names) if n[0] == "h" or n.startswith("tail")]
+        ids = hinge + [names.index("feed")]
+        give = np.array([M_PLASTIC / K_BEND] * len(hinge) + [F_CLAMP / K_FEED])
+        st = np.zeros(len(ids))
+        _CABLE_SET.update(ids=ids, give=give, set=st, names=[names[i] for i in ids])
+    ids, give = _CABLE_SET["ids"], _CABLE_SET["give"]
+    st = np.clip(_CABLE_SET["set"], q[ids] - give, q[ids] + give)
+    _CABLE_SET["set"] = st
+    obj.set_joint_position_target(torch.tensor(st[None], dtype=torch.float32, device=obj.device), joint_ids=ids)
+
+
 def _patch_embodiment(module) -> None:
     cls = getattr(module, "YamArenaEmbodiment", None)
     if cls is None or getattr(cls, "_owb", False):
@@ -704,11 +961,14 @@ def _patch_embodiment(module) -> None:
 
     def reset(self, *args, **kwargs):
         obs = base_reset(self, *args, **kwargs)
+        _CABLE_SET.clear()
+        _cable_follow(self._env)
         for fn in _RESET:
             fn()
         return obs
 
     def _task_step(self, *args, **kwargs):
+        _cable_follow(self._env)
         for fn in _STEP:
             fn(self._env)
         return base_task_step(self, *args, **kwargs)

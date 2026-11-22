@@ -1,9 +1,9 @@
 """Install an old-work electrical box in a drywall cut-out. A wall section stands across the far side of the table,
 facing the arms: 1/2 in drywall on 2x4 studs (16 in on centre) between a bottom and a top plate, with a 1-gang
-cut-out (2-1/4 x 3-5/8 in, the box's template) in the stud bay, its long side vertical. On the table on the left: a
-blue 1-gang old-work box (PVC, 4-1/8 x 2-1/4 x 2-3/4 in, 57 g) lying on its back, open face up, its two swing-clamp
-screws backed out and its two clamp arms folded inside. On the right: a #2 Phillips stubby screwdriver standing tip
-down in a wooden block.
+cut-out (2-1/4 x 3-5/8 in, the box's template) in the stud bay, its long side vertical. A 14/2 NM-B cable comes down
+inside the stud bay from the top plate, out through the cut-out and into the back of a blue 1-gang old-work box (PVC,
+4-1/8 x 2-1/4 x 2-3/4 in, 57 g), which hangs on it in front of the cut-out, its two swing-clamp screws backed out and
+its two clamp arms folded inside. On the right: a #2 Phillips stubby screwdriver standing tip down in a wooden block.
 
 Task: put the box in the cut-out with its ears flat on the wall, and drive both clamp screws with the screwdriver
 until both clamps grip the drywall from behind; then put the screwdriver down and take both hands off.
@@ -37,16 +37,26 @@ SCORE_OVER = "end"
 SUCCESS_HOLD_S = 1.0
 TOP = TABLE_TOP[SCENE]
 
-INSTRUCTION = ("Install the blue electrical box in the hole in the wall: push it in until its ears are flat on the "
-               "wall, then drive both of its clamp screws with the screwdriver until the box is held tight. Put the "
-               "screwdriver down and take both hands away.")
+INSTRUCTION = ("The cable is already in the blue electrical box. Install the box in the hole in the wall: push it in "
+               "until its ears are flat on the wall, with the cable going back into the wall behind it, then drive both "
+               "of its clamp screws with the screwdriver until the box is held tight. Put the screwdriver down and take "
+               "both hands away.")
 
 # -- layout (world: x forward from the arm bases, y to the left, z up; TOP is the table's top) ---------------------------
 XW = 0.34                       # the drywall's face
 HOLE_Z = 0.19                   # the cut-out's centre above the table
 HOLE = np.array([XW, 0.0, TOP + HOLE_Z])
-BOX_START = (0.20, 0.17, TOP + bp.DEPTH + 0.3 * MM)            # on its back, its long side along x, open face up
-BOX_START_XYZW = (0.0, math.sin(math.pi / 4), 0.0, math.cos(math.pi / 4))   # box x (its depth) pointing down
+if bp.CABLE:
+    # The cable is already fed into the box, and the box hangs on it in front of the cut-out, square to the wall,
+    # its ears' back faces START_OUT (78 mm) in front of the wall (its back 11 mm short of the wall's face).
+    BOX_START = tuple(float(v) for v in HOLE - np.array([bp.START_OUT, 0.0, 0.0]))
+    BOX_START_XYZW = (0.0, 0.0, 0.0, 1.0)
+    BOX_ROOT, BOX_ROOT_XYZW = bp.cable_spawn(BOX_START)            # where the articulation is spawned (the cable unloaded)
+    CABLE_ANCHOR = bp.cable_anchor_point(BOX_START)                # where the cable leaves the top plate
+else:   # the bare box on the table (the clamp bench only)
+    BOX_START = (0.20, 0.17, TOP + bp.DEPTH + 0.3 * MM)            # on its back, its long side along x, open face up
+    BOX_START_XYZW = (0.0, math.sin(math.pi / 4), 0.0, math.cos(math.pi / 4))   # box x (its depth) pointing down
+    BOX_ROOT, BOX_ROOT_XYZW = BOX_START, BOX_START_XYZW
 BLOCK_XY = (0.17, -0.17)
 DRIVER_START = (BLOCK_XY[0], BLOCK_XY[1], TOP + bp.BLOCK[2] - bp.SHAFT_TOP + 0.3 * MM)   # tip down, handle on the block
 DRIVER_START_XYZW = (0.0, 0.0, 0.0, 1.0)                     # upright: tip (its origin) down, handle up
@@ -54,7 +64,7 @@ DRIVER_START_XYZW = (0.0, 0.0, 0.0, 1.0)                     # upright: tip (its
 OBJECTS = [
     bp.part("wall", "wall", HOLE, fixed=True, hole_z=HOLE_Z),
     bp.part("block", "block", (BLOCK_XY[0], BLOCK_XY[1], TOP), fixed=True),
-    bp.part("box", "box", BOX_START, BOX_START_XYZW),
+    bp.part("box", "box", BOX_ROOT, BOX_ROOT_XYZW),
     bp.part("driver", "driver", DRIVER_START, DRIVER_START_XYZW),
 ]
 
@@ -71,6 +81,7 @@ STILL = 1.0 * MM                # ... and it and the box moved no more than 1 mm
 HOLD_STEPS = 20                 # 1 s at 20 Hz
 ENGAGE_R = 2.5 * MM             # the driver is in a screw: its tip within 2.5 mm of the screw's axis (in its cross) ...
 ENGAGE_DEG = 25.0               # ... its shaft within 25 degrees of the axis, its tip in the recess
+CABLE_OUT = 15.0 * MM           # the cable counts as still fed in if no more than this much of it has been drawn back out
 CREDIT = {"flush": 0.25, "one": 0.5, "both": 0.75}
 
 
@@ -167,6 +178,8 @@ def observe(box_pos, box_r, joints, d_pos, d_r, gripper_points) -> float:
         _EP["turns"][t] = now
     flush = is_flush(box_pos, box_r)
     _EP["ever_flush"] |= flush
+    fed = bp.cable_fed(joints)
+    cable_in = fed >= bp.FED - CABLE_OUT       # a box clamped with its cable drawn out has to come out again
     snug = {t: bool(mech[t]["swing"] >= SWUNG_DEG and mech[t]["force"] >= SNUG_N
                     and _EP["undriven"][t] <= UNDRIVEN_TURNS) for t in ("t", "b")}
     tip, _ = driver_points(d_pos, d_r)
@@ -178,13 +191,13 @@ def observe(box_pos, box_r, joints, d_pos, d_r, gripper_points) -> float:
     c_box, c_drv = clearance(gripper_points, box_pos, box_r, d_pos, d_r)
     down = driver_low(d_pos, d_r) <= DOWN_Z and eng is None
     n_snug = sum(snug.values())
-    done = bool(flush and n_snug == 2 and down and still and min(c_box, c_drv) >= CLEAR)
+    done = bool(flush and cable_in and n_snug == 2 and down and still and min(c_box, c_drv) >= CLEAR)
     _EP["held"] = _EP["held"] + 1 if done else 0
     if _EP["held"] >= HOLD_STEPS:
         score = 1.0
-    elif flush and n_snug == 2:
+    elif flush and cable_in and n_snug == 2:
         score = CREDIT["both"]
-    elif flush and n_snug == 1:
+    elif flush and cable_in and n_snug == 1:
         score = CREDIT["one"]
     elif _EP["ever_flush"]:
         score = CREDIT["flush"]
@@ -193,6 +206,7 @@ def observe(box_pos, box_r, joints, d_pos, d_r, gripper_points) -> float:
     _EP.update(score=score, steps=_EP["steps"] + 1,
                info={"flush": flush, "gaps_mm": np.round(1000 * ear_gaps(box_pos, box_r), 2).tolist(), "snug": snug,
                      "mech": mech, "engaged": eng, "down": down, "still": still, "clear_box": c_box,
+                     "cable_fed_mm": round(1000 * fed, 1), "cable_in": cable_in,
                      "clear_driver": c_drv, "driven": dict(_EP["driven"]), "undriven": dict(_EP["undriven"])})
     return score
 
@@ -208,7 +222,8 @@ def score(objects) -> float:
     each screw turned with the screwdriver, the screwdriver put down (its lowest point within 5 cm of the table, not
     in a screw), both grippers 3 cm or more from the box and the screwdriver, and the box and screwdriver still.
     0.75: flush and both clamps tight. 0.5: flush and one clamp tight. 0.25: the box was flush in the cut-out at
-    some point. Else 0."""
+    some point. Else 0. The three higher scores also need the cable still fed into the box: no more than 15 mm of
+    it drawn back out through the entry."""
     return float(_EP["score"])
 
 
@@ -248,7 +263,7 @@ def _follow(env) -> None:
         print(f"[owb] step {_EP['steps']} score {_EP['score']} flush {inf['flush']} gaps {inf['gaps_mm']} "
               f"box-hole {np.round(1000 * (b.pos - HOLE), 1).tolist()} "
               f"tip-box {np.round(1000 * (rotation(b.quat_xyzw).T @ (d.pos - b.pos)), 1).tolist()} "
-              f"eng {inf['engaged']} down {inf['down']} still {inf['still']} clear {inf['clear_box']:.3f}/"
+              f"eng {inf['engaged']} down {inf['down']} still {inf['still']} fed {inf['cable_fed_mm']} clear {inf['clear_box']:.3f}/"
               f"{inf['clear_driver']:.3f} "
               + " ".join(f"{t}: turns {m[t]['turns']:.2f} swing {m[t]['swing']:.0f} x {1000 * m[t]['arm_x']:.1f} "
                          f"F {m[t]['force']:.1f}" for t in ("t", "b"))
