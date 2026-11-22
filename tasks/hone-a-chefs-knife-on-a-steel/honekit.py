@@ -65,16 +65,16 @@ S_COM = (0.186, 0.0, 0.0)     # 7.3 cm from the guard toward the tip (computed: 
 S_INERTIA = (1.2e-5, 3.1e-3, 3.1e-3)   # estimates, from the same split
 
 # -- the board and the scale ---------------------------------------------------------------------------------------------
-BOARD = (0.305, 0.457, 0.038) # the cutting board: depth (x), width (y), thickness (12 x 18 x 1.5 in)
+BOARD = (0.305, 0.457, 0.0127) # the cutting board: depth (x), width (y), thickness (12 x 18 x 1/2 in, polyethylene)
 PAD = (0.080, 0.080, 0.003)   # the non-slip pad the steel's tip stands on
-SCALE = (0.150, 0.200, 0.020) # the kitchen scale's body: depth, width, height (estimates for a flat 5 kg scale)
+SCALE = (0.300, 0.300, 0.050) # the bench scale's base and pan: depth, width, height (maker: 300 x 300 x 50 mm); its display is a separate indicator
 SCALE_GAP = 0.003             # the board's underside is this far above the scale's body when nothing is on it
 SPRING = 10000.0              # N/m: the scale's load cell as a spring (an estimate: 1 mm under 1 kg)
 SPRING_DAMP = 400.0           # N s/m
-BOARD_MASS = 3.2              # kg (the board's inertia on its spring; it is tared out, so it has no weight)
+BOARD_MASS = 1.45             # kg (the board's inertia on its spring, from its 3.24 lb shipping weight; it is tared out, so it has no weight)
 
 STEEL, HANDLE_BLACK, ROD_GREY = (0.72, 0.73, 0.75), (0.06, 0.06, 0.07), (0.55, 0.56, 0.58)
-WALNUT, PAD_GREEN, SCALE_WHITE = (0.42, 0.29, 0.19), (0.20, 0.42, 0.30), (0.88, 0.88, 0.86)
+WALNUT, PAD_GREEN, SCALE_WHITE = (0.42, 0.29, 0.19), (0.20, 0.42, 0.30), (0.62, 0.64, 0.66)   # brown board, green pad, grey scale
 FRICTION = {"handle": (0.9, 0.8), "blade": (0.3, 0.25), "rod": (0.3, 0.25), "board": (0.5, 0.45), "pad": (1.1, 1.0)}   # estimates
 PAD_PATCH = 0.006             # radius of the patch over which a rubber gripper pad meets a handle (an estimate)
 ARM_LINKS = ("link2", "link3", "link4", "link5", "gripper", "tip_left", "tip_right")
@@ -460,11 +460,13 @@ class _Author:
             self.mats[key] = path
         return self.mats[key]
 
-    def body(self, path, mass, lin_damp=0.05, ang_damp=0.1, iterations=None, com=None, inertia=None):
+    def body(self, path, mass, lin_damp=0.05, ang_damp=0.1, iterations=None, com=None, inertia=None, report=False):
         from pxr import PhysxSchema, UsdPhysics
 
         prim = self.UsdGeom.Xform.Define(self.stage, path).GetPrim()
         UsdPhysics.RigidBodyAPI.Apply(prim)
+        if report:                                   # the simulator reports this body's contacts (every one, however light)
+            PhysxSchema.PhysxContactReportAPI.Apply(prim).CreateThresholdAttr().Set(0.0)
         api = UsdPhysics.MassAPI.Apply(prim)
         api.CreateMassAttr(float(mass))
         if com is not None:
@@ -566,7 +568,7 @@ def _spawn_knife(prim_path: str, cfg, translation=None, orientation=None, **kwar
     spec = _SPECS[cfg.kit_name]
     _PATHS[spec.name] = prim_path
     a = _Author(prim_path, translation, orientation)
-    a.body(prim_path, float(spec.mass), iterations=32, com=K_COM, inertia=K_INERTIA)
+    a.body(prim_path, float(spec.mass), iterations=32, com=K_COM, inertia=K_INERTIA, report=True)
     grip, steel = a.mat("handle", *FRICTION["handle"]), a.mat("blade", *FRICTION["blade"])
     for n, (pts, color) in enumerate(handle_pieces()):
         a.hull(f"{prim_path}/h_{n}", pts, a.look(color, rough=0.75), grip, patch=PAD_PATCH)
@@ -581,7 +583,7 @@ def _spawn_steel(prim_path: str, cfg, translation=None, orientation=None, **kwar
     spec = _SPECS[cfg.kit_name]
     _PATHS[spec.name] = prim_path
     a = _Author(prim_path, translation, orientation)
-    a.body(prim_path, float(spec.mass), iterations=32, com=S_COM, inertia=S_INERTIA, ang_damp=1.0)    # it does not roll away
+    a.body(prim_path, float(spec.mass), iterations=32, com=S_COM, inertia=S_INERTIA, ang_damp=1.0, report=True)    # it does not roll away
     grip, rod = a.mat("handle", *FRICTION["handle"]), a.mat("rod", *FRICTION["rod"])
     for n, (pts, color) in enumerate(steel_pieces()):
         a.hull(f"{prim_path}/h_{n}", pts, a.look(color, rough=0.75), grip, patch=PAD_PATCH)
@@ -727,6 +729,92 @@ def _arm(environment) -> None:
         jt.CreateJointEnabledAttr().Set(True)       # last write, after the frames
 
 
+# -- the contact force between the knife and the steel -----------------------------------------------------------------
+_CONTACT: dict = {"view": None, "sub": None, "sum": 0.0, "steps": 0, "hits": 0, "dt": 1.0 / 240.0, "error": "", "calls": 0}
+
+
+def _pair_paths() -> tuple:
+    knife = next((n for n, s in _SPECS.items() if isinstance(s, Knife)), None)
+    steel = next((n for n, s in _SPECS.items() if isinstance(s, Steel)), None)
+    return _PATHS.get(knife), _PATHS.get(steel)
+
+
+def _pair_force() -> float:
+    """The contact force (N) between the knife's body and the steel's body over the last physics step, as PhysX
+    reports it (the same contact view Isaac Lab's contact sensor reads)."""
+    view = _CONTACT["view"]
+    if view is None:
+        return 0.0
+    m = _np(view.get_contact_force_matrix(dt=_CONTACT["dt"])).reshape(-1, 3)
+    return float(np.linalg.norm(m.sum(axis=0)))
+
+
+def _on_physics_step(dt) -> None:
+    """After every physics step: add that step's knife-on-steel contact force to the running count."""
+    try:
+        _CONTACT["calls"] += 1
+        f = _pair_force()
+        _CONTACT["sum"] += f
+        _CONTACT["steps"] += 1
+        _CONTACT["hits"] += 1 if f > 1e-4 else 0
+    except Exception as err:                         # noqa: BLE001
+        _CONTACT["error"] = repr(err)
+
+
+def _watch_contacts(environment) -> None:
+    """Make the contact view for the knife against the steel, and read it after every physics step (once)."""
+    if _CONTACT["view"] is not None:
+        return
+    try:
+        import omni.physx
+        from isaaclab_physx.physics import PhysxManager
+
+        base = environment.unwrapped
+        dt = getattr(base, "physics_dt", None)
+        if dt is None:
+            dt = float(base.sim.get_physics_dt())
+        _CONTACT["dt"] = float(dt)
+        kpath, spath = _pair_paths()
+        sim_view = PhysxManager.get_physics_sim_view()
+        _CONTACT["view"] = sim_view.create_rigid_contact_view([kpath], filter_patterns=[[spath]], max_contact_data_count=64)
+        _CONTACT["sub"] = omni.physx.get_physx_interface().subscribe_physics_on_step_events(_on_physics_step, pre_step=False, order=50)
+    except Exception as err:                         # noqa: BLE001
+        _CONTACT["error"] = repr(err)
+        print(f"[honekit] no contact view: {err!r}", file=sys.stderr, flush=True)
+
+
+def edge_force() -> tuple:
+    """The contact force between the knife and the steel since this was last asked (one control step): its mean over
+    the physics steps (N), the share of those steps with contact, and how many physics steps there were. If the
+    per-step reading is not running, the force over the last physics step alone."""
+    n = _CONTACT["steps"]
+    if n:
+        mean, share = _CONTACT["sum"] / n, _CONTACT["hits"] / n
+    else:
+        try:
+            mean = _pair_force()
+        except Exception as err:                     # noqa: BLE001
+            _CONTACT["error"], mean = repr(err), 0.0
+        share = 1.0 if mean > 1e-4 else 0.0
+    _CONTACT["sum"], _CONTACT["steps"], _CONTACT["hits"] = 0.0, 0, 0
+    return mean, share, n
+
+
+def grip_forces(environment) -> dict:
+    """The force each finger's motor is applying now (N), per arm: {"left": [f, f], "right": [f, f]}."""
+    out = {}
+    for arm in ("left", "right"):
+        robot = environment.unwrapped.scene[f"{arm}_robot"]
+        names = list(robot.joint_names)
+        tau = None
+        for attr in ("applied_torque", "computed_torque"):
+            if hasattr(robot.data, attr):
+                tau = _np(getattr(robot.data, attr))[0]
+                break
+        out[arm] = [round(abs(float(tau[names.index(j)])), 2) for j in ("joint7", "joint8")] if tau is not None else None
+    return out
+
+
 def _kit_state(environment, spec) -> KitState:
     asset = environment.unwrapped.scene[spec.name]
     pose = _np(asset.data.root_link_pose_w)[0]
@@ -856,6 +944,8 @@ def _patch_embodiment(module) -> None:
                 else:
                     del base.reset
         _ENV["env"] = self._env
+        _watch_contacts(self._env)
+        edge_force()                                 # start the count afresh
         for fn in _RESET:
             fn(self._env)
         return obs

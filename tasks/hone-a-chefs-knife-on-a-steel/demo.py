@@ -36,7 +36,7 @@ import numpy as np
 
 CONTROL_HZ = 20
 FULL_OPEN = 0.0939                 # m between the pads at grip command 1.0
-MODES = ("full", "still", "probe", "oneface", "steep", "middle", "heavy", "inhand", "guard", "two")
+MODES = ("full", "still", "probe", "pair", "oneface", "steep", "middle", "heavy", "inhand", "guard", "two", "hover", "reverse")
 
 
 def frame(approach, closing) -> np.ndarray:
@@ -130,11 +130,12 @@ TOOL: dict = {}                          # where each hand's tool point actually
 PHI = math.radians(25.0)                 # the knife points this far left of straight ahead while it is honed
 ALPHA = math.radians(15.0)               # the blade's face is held this far off the steel
 GRIP_BACK = 0.095                        # the right hand takes the knife's handle this far behind the heel (4.5 cm from its end)
-KNIFE_GAP = 0.000                        # pad gap commanded on the 20 mm handle: the full 50 N on each pad
+KNIFE_GAP = 0.0065                       # pad gap commanded on the 20 mm handle: about 34 N on each pad (the real gripper gives about 40)
 STEEL_GAP = 0.016                        # pad gap commanded on the steel's 26 mm handle
 S0, S1 = 0.018, 0.186                    # a stroke's contact runs between these places on the edge (m from the heel)
 Z0, Z1 = 0.200, 0.070                    # ... and between these heights up the rod from its tip
-PRESS = 0.0040                           # the edge is aimed this far inside the rod's surface
+PRESS = 0.0040                           # the edge is aimed this far inside the rod's surface at the heel ...
+PRESS_TIP = 0.0080                       # ... and this far at the tip, where the edge curves away and the contact is lightest
 OFF = 0.025                              # off the steel: the edge this far outside the rod's surface
 BACK = 0.050                             # drawn back this far past the stroke's end before crossing sides
 STROKE_S = 2.6                           # seconds for one stroke
@@ -322,10 +323,15 @@ def script(T, left, right, mode: str = "full", idle_s: float = 60.0):
         yield
 
     # 3. The strokes.
-    n_strokes = {"probe": 1, "two": 2, "oneface": 4, "steep": 2, "middle": 2, "heavy": 2}.get(mode, 2 * T.EACH)
+    n_strokes = {"probe": 1, "pair": 2, "two": 2, "oneface": 4, "steep": 2, "middle": 2, "heavy": 2, "hover": 2, "reverse": 2}.get(mode, 2 * T.EACH)
     alpha = math.radians(40.0) if mode == "steep" else ALPHA
     s0, s1 = (0.060, 0.140) if mode == "middle" else (S0, S1)
-    press = 0.030 if mode == "heavy" else PRESS
+    z0, z1 = Z0, Z1
+    if mode == "reverse":                                        # tip to heel, and up the steel
+        s0, s1, z0, z1 = S1, S0, Z1, Z0
+    press = 0.030 if mode == "heavy" else (-0.0030 if mode == "hover" else PRESS)   # hover: the edge 3 mm clear of the rod
+    press_tip = PRESS_TIP if press == PRESS else press
+    back = 0.090 if mode == "middle" else BACK                    # drawn back until the tip is clear of the steel before crossing sides
 
     def hold_left():
         ls.hold(hold_p, hold_r)
@@ -353,41 +359,42 @@ def script(T, left, right, mode: str = "full", idle_s: float = 60.0):
         n_strokes = 0
     face = -1
     for i in range(n_strokes):
-        p, r = rf(face, s0, Z0, OFF, alpha)
+        p, r = rf(face, s0, z0, OFF, alpha)
         yield from go(p, 2.5 if i == 0 else 0.3, r)
         across = face * P["side"]                                # the way the edge leans on the steel
         yield from go(p, 0.4, r)                                 # settle, off the steel
-        p, r = rf(face, s0, Z0, -press, alpha)
+        p, r = rf(face, s0, z0, -press, alpha)
         yield from go(p, 0.6, r, across)
         n = max(1, round(STROKE_S * CONTROL_HZ))
         for k in range(1, n + 1):
             f = k / n
-            p, r = rf(face, s0 + f * (s1 - s0), Z0 + f * (Z1 - Z0), -press, alpha)
+            p, r = rf(face, s0 + f * (s1 - s0), z0 + f * (z1 - z0), -(press + f * (press_tip - press)), alpha)
             rs.to(p, r, across)
             hold_left()
             yield
-        p, r = rf(face, s1, Z1, OFF, alpha)
+        p, r = rf(face, s1, z1, OFF, alpha)
         yield from go(p, 0.5, r, across)
-        p, r = rf(face, s1 + BACK, Z1, OFF, alpha)
-        yield from go(p, 0.6, r)
+        s_out = max(s0, s1) + back                               # drawn back until the tip is clear of the steel
+        p, r = rf(face, s_out, min(z0, z1), OFF, alpha)
+        yield from go(p, 0.6 if back == BACK else 1.5, r)
         if mode == "probe" or i == n_strokes - 1:
             break
         if mode != "oneface":
             face = -face
-            p, r = rf(face, s1 + BACK, Z1, OFF, alpha)
+            p, r = rf(face, s_out, min(z0, z1), OFF, alpha)
             yield from go(p, 1.2, r)
-        p, r = rf(face, s0, Z0, OFF, alpha)                      # back up for the next stroke
+        p, r = rf(face, s0, z0, OFF, alpha)                      # back up for the next stroke
         yield from go(p, 2.0, r)
     if mode == "probe":
         for _ in range(int(3.0 * CONTROL_HZ)):
             hold_left()
             yield
         return
-    if face == 1:                                                # back to the right of the steel before parking
-        p, r = rf(-1, s1 + BACK, Z1, OFF, alpha)
+    if face == 1 and n_strokes:                                  # back to the right of the steel before parking
+        p, r = rf(-1, max(s0, s1) + back, min(z0, z1), OFF, alpha)
         yield from go(p, 1.2, r)
     yield from go(P["park"][0], 2.5, P["park"][1])
-    if mode in ("inhand", "oneface", "steep", "middle", "heavy", "guard"):
+    if mode in ("inhand", "pair", "oneface", "steep", "middle", "heavy", "guard", "hover", "reverse"):
         for _ in range(int(3.0 * CONTROL_HZ)):
             rs.to(*P["park"])
             hold_left()
@@ -474,6 +481,9 @@ def run(task_path: str, out_dir: str, max_steps: int = 2800, record: bool = True
             out_[h.name] = {"tool_mm": [round(1000 * float(v), 1) for v in TOOL[h.name] - [0.0, 0.0, T.TOP]],
                             "want_mm": [round(1000 * float(v), 1) for v in h.pos - [0.0, 0.0, T.TOP]],
                             "gap_mm": round(1000 * sum(abs(float(q[jn.index(j)])) for j in ("joint7", "joint8")), 1)}
+        forces = K.grip_forces(emb._env)
+        for name in out_:
+            out_[name]["grip_n"] = forces.get(name)
         return out_
 
     def places(st) -> dict:
@@ -502,6 +512,7 @@ def run(task_path: str, out_dir: str, max_steps: int = 2800, record: bool = True
     measure()
     start = {"task": T.report(states()), "places": places(states())}
     steps, ended, success, info = 0, None, False, {}
+    grip = {h: {"peak_n": 0.0, "peak_in_strokes_n": 0.0} for h in ("left", "right")}   # per finger, as the simulator applies it
     while steps < max_steps:
         try:
             next(gen)
@@ -512,6 +523,12 @@ def run(task_path: str, out_dir: str, max_steps: int = 2800, record: bool = True
         measure()
         info = res.info
         snap_frames(res.observation)
+        forces, stroking = K.grip_forces(emb._env), T._STATE["now"] is not None
+        for h, ff in forces.items():
+            if ff:
+                grip[h]["peak_n"] = max(grip[h]["peak_n"], *ff)
+                if stroking:
+                    grip[h]["peak_in_strokes_n"] = max(grip[h]["peak_in_strokes_n"], *ff)
         if steps % every == 0:
             st = states()
             rep = T.report(st)
@@ -526,7 +543,9 @@ def run(task_path: str, out_dir: str, max_steps: int = 2800, record: bool = True
         if ended is not None and steps - ended >= hold_s * CONTROL_HZ:
             break
     result = {"lot": T.LOT, "mode": mode, "task_score": 1.0 if success else float(info.get("score", 0.0) or 0.0),
-              "success": success, "steps": steps, "script_steps": ended,
+              "success": success, "steps": steps, "script_steps": ended, "grip_per_finger": grip,
+              "contact_view": {"made": K._CONTACT["view"] is not None, "physics_steps_read": K._CONTACT["calls"],
+                               "physics_dt": K._CONTACT["dt"], "error": K._CONTACT["error"]},
               "worst_ik": {h.name: {"mm": round(h.worst_mm, 2), "deg": round(h.worst_deg, 2)} for h in (left, right)},
               "start": start, "end": {"task": T.report(states()), "places": places(states())}, "trace": trace}
     if record:

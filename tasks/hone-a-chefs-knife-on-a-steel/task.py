@@ -1,4 +1,5 @@
-"""On the station table (standing in for a kitchen counter): a walnut cutting board standing on a flat kitchen scale.
+"""On the station table (standing in for a kitchen counter): a polyethylene cutting board standing on a bench scale
+whose display is a separate indicator.
 An 8 in chef's knife lies on the board with its handle over the board's right edge, cutting edge away from the robot.
 A 10 in honing steel lies on the board, on its tip and its guard, with its handle over the board's left edge. A green non-slip pad is on the
 board.
@@ -9,7 +10,10 @@ draws the edge down the steel, from the heel to the tip, the blade's face 15 to 
 four strokes on each face, a stroke on one side of the steel and then one on the other. Then both go back on the
 board, the knife's edge turned away from the robot.
 
-The scale under the board is how "lightly" is measured: its reading may rise by no more than 30 g during a stroke.
+A stroke is counted only while the edge is really pressed on the steel (the simulator's contact force between the
+blade and the rod; on a real rig a lamp wired across the two), running from the heel to the tip and down the steel in
+that order. The scale under the board is how "lightly" is measured: its reading may rise by no more than 30 g during
+a stroke.
 
 The board's, the knife's and the steel's places change with ``HONE_LOT`` (A or B).
 
@@ -60,7 +64,9 @@ STEEL_X = {"A": 0.360, "B": 0.368}[LOT]          # x of the lying steel (it lies
 KNIFE, STEEL, BOARD, SCALE = "knife", "steel", "board", "scale"
 
 # -- scoring -----------------------------------------------------------------------------------------------------------
-TOUCH = 0.0010           # the edge is on the steel when it is within this of the rod's surface
+LOADED_N = 0.02          # the edge is on the steel when the simulator reports at least this contact force (N) between them
+TOUCH = 0.0020           # ... and the edge's nearest point is within this of the rod's surface (where the contact is read off)
+BACKTRACK = 0.015        # a stroke's contact may go back toward the heel, or back up the steel, by no more than this
 NEAR_END = 0.030         # a stroke starts within this of the heel and ends within this of the tip
 ANGLE = (10.0, 25.0)     # degrees between the blade's face and the steel, all through a stroke
 STEEP = 30.0             # an edge on the steel at more than this is driven into it
@@ -73,7 +79,7 @@ EACH = 4                 # strokes on each face
 CLEAR = 0.030            # both arms this far from the knife and the steel for them to be let go
 STILL, TURN = 0.02, 0.5  # at rest: under this many m/s and rad/s
 LIE = 0.006              # lying on the board: lowest point within this of the board's top
-BREAK = 3                # a stroke ends after this many control steps off the steel
+BREAK = 1                # a stroke ends at the first control step without loaded contact
 
 _EDGE = K.edge_local(0.001)                      # the edge every millimetre, in the knife's frame
 _EDGE_S = _EDGE[:, 0]
@@ -179,7 +185,7 @@ def touch(knife, steel) -> dict:
 def new_state() -> dict:
     return {"steps": 0, "void": "", "strokes": [], "counted": 0, "last_face": 0, "now": None, "off": 0,
             "idle_g": 0.0, "grams": 0.0, "peak_g": 0.0, "steep": 0, "knife_down": False, "steel_down": False,
-            "edge_away": False, "let_go": False, "still": False, "nearest_hand_mm": None}
+            "edge_away": False, "let_go": False, "still": False, "nearest_hand_mm": None, "force_n": 0.0}
 
 
 def _close(s: dict) -> None:
@@ -193,6 +199,10 @@ def _close(s: dict) -> None:
         why.append(f"started {1000 * k['s0']:.0f} mm from the heel")
     if k["s1"] < K.BL - NEAR_END:
         why.append(f"ended {1000 * (K.BL - k['s1']):.0f} mm from the tip")
+    if k["back_s"] > BACKTRACK:
+        why.append(f"contact went {1000 * k['back_s']:.0f} mm back toward the heel")
+    if k["back_t"] > BACKTRACK:
+        why.append(f"contact went {1000 * k['back_t']:.0f} mm back up the steel")
     if k["a_min"] < ANGLE[0] or k["a_max"] > ANGLE[1]:
         why.append(f"angle {k['a_min']:.0f} to {k['a_max']:.0f} deg")
     if k["faces"] != 1:
@@ -207,7 +217,9 @@ def _close(s: dict) -> None:
         why.append(f"scale rose {k['rise']:.0f} g")
     rec = {"face": k["face"], "from_heel_mm": round(1000 * k["s0"]), "to_tip_mm": round(1000 * (K.BL - k["s1"])),
            "angle_deg": [round(k["a_min"], 1), round(k["a_max"], 1)], "down_steel_mm": round(1000 * (k["t0"] - k["t1"])),
-           "rise_g": round(k["rise"], 1), "steps": k["n"], "valid": not why, "why": "; ".join(why)}
+           "rise_g": round(k["rise"], 1), "force_n": [round(k["f_min"], 2), round(k["f_max"], 2)],
+           "back_mm": [round(1000 * k["back_s"], 1), round(1000 * k["back_t"], 1)], "steps": k["n"], "valid": not why,
+           "why": "; ".join(why)}
     if not why and k["face"] != s["last_face"]:
         s["counted"] += 1
         s["last_face"] = k["face"]
@@ -217,12 +229,14 @@ def _close(s: dict) -> None:
     s["strokes"].append(rec)
 
 
-def advance(s: dict, knife, steel, grams: float, arms, speeds) -> dict:
+def advance(s: dict, knife, steel, grams: float, arms, speeds, force: float = 0.0) -> dict:
     """One control step of the record. ``knife``, ``steel``: (pos, quat). ``grams``: the scale's reading.
     ``arms``: [left, right], each (tool point, points on that arm's gripper and fingers). ``speeds``: {name: (m/s,
-    rad/s)} for the knife and the steel."""
+    rad/s)} for the knife and the steel. ``force``: the contact force between the blade and the rod over this control
+    step (N), as the simulator reports it; without it nothing is on the steel."""
     s["steps"] += 1
     s["grams"] = round(float(grams), 1)
+    s["force_n"] = round(float(force), 3)
     c = touch(knife, steel)
     sp, sq = steel
     rs = K._rotation(sq)
@@ -230,18 +244,21 @@ def advance(s: dict, knife, steel, grams: float, arms, speeds) -> dict:
     upright = (math.degrees(math.acos(max(-1.0, min(1.0, float(rs[2, 0]))))) <= UPRIGHT
                and abs(tip[0] - PAD_XY[0]) <= K.PAD[0] / 2 and abs(tip[1] - PAD_XY[1]) <= K.PAD[1] / 2
                and tip[2] - TOP - PAD_TOP <= 0.004)
-    on = c["gap"] <= TOUCH
+    on = float(force) >= LOADED_N and c["gap"] <= TOUCH
     if on:
         k = s["now"]
         if k is None:
+            # s0, t0: where the contact began; s1, t1: where it is now (in time order, not extremes)
             k = s["now"] = {"face": c["face"], "s0": c["s"], "s1": c["s"], "t0": c["t"], "t1": c["t"], "a_min": c["angle"],
                             "a_max": c["angle"], "faces": 1, "lead": c["lead"], "upright": upright, "ref": s["idle_g"],
-                            "rise": 0.0, "n": 0}
+                            "rise": 0.0, "n": 0, "s_hi": c["s"], "t_lo": c["t"], "back_s": 0.0, "back_t": 0.0,
+                            "f_min": float(force), "f_max": float(force)}
         k["n"] += 1
-        k["s1"] = max(k["s1"], c["s"])
-        k["s0"] = min(k["s0"], c["s"])
-        k["t1"] = min(k["t1"], c["t"])
-        k["t0"] = max(k["t0"], c["t"])
+        k["s1"], k["t1"] = c["s"], c["t"]
+        k["back_s"] = max(k["back_s"], k["s_hi"] - c["s"])       # how far the contact has gone back toward the heel
+        k["back_t"] = max(k["back_t"], c["t"] - k["t_lo"])       # ... and back up the steel
+        k["s_hi"], k["t_lo"] = max(k["s_hi"], c["s"]), min(k["t_lo"], c["t"])
+        k["f_min"], k["f_max"] = min(k["f_min"], float(force)), max(k["f_max"], float(force))
         k["a_min"], k["a_max"] = min(k["a_min"], c["angle"]), max(k["a_max"], c["angle"])
         k["faces"] = k["faces"] if c["face"] == k["face"] else 2
         k["lead"] = k["lead"] and c["lead"]
@@ -346,17 +363,22 @@ def _watch(environment) -> None:
     poses = {n: (st[n].pos, st[n].quat_xyzw) for n in (KNIFE, STEEL)}
     speeds = {n: (float(np.linalg.norm(st[n].lin_vel)), float(np.linalg.norm(st[n].ang_vel))) for n in (KNIFE, STEEL)}
     grams = K.scale_grams(float(st[BOARD].pos[2]), float(board_start()[2]))
-    advance(_STATE, poses[KNIFE], poses[STEEL], grams, _hands(environment), speeds)
+    force, share, _ = K.edge_force()
+    _STATE["contact_share"] = round(share, 2)
+    advance(_STATE, poses[KNIFE], poses[STEEL], grams, _hands(environment), speeds, force)
 
 
 # -- scoring --------------------------------------------------------------------------------------------------------
 def score(objects) -> float:
     """Scored from a record kept through the trial and from the end state.
-    The edge is on the steel when it is within 1 mm of the rod. A stroke is one unbroken spell of that. It is valid
-    if it starts within 3 cm of the heel and ends within 3 cm of the tip, the blade's face stays 10 to 25 degrees off
-    the steel, on one face, the contact runs at least 5 cm down the steel with the edge leading, the steel stands
-    within 15 degrees of upright with its tip on the pad, and the scale's reading never rises more than 30 g above
-    what it read before the stroke. A valid stroke is counted if it is on the other face from the last one counted.
+    The edge is on the steel while the simulator reports a contact force of 0.02 N or more between the blade and the
+    rod (on a real rig: while a lamp wired across the knife and the steel is lit). A stroke is one unbroken spell of
+    that; it ends at the first control step without it. It is valid if the contact begins within 3 cm of the heel
+    and ends within 3 cm of the tip, moving toward the tip and down the steel in time order (never more than 1.5 cm
+    back toward the heel or back up the steel), the blade's face stays 10 to 25 degrees off the steel, on one face,
+    the contact ends at least 5 cm lower on the steel than it began with the edge leading, the steel stands within
+    15 degrees of upright with its tip on the pad, and the scale's reading never rises more than 30 g above what it
+    read before the stroke. A valid stroke is counted if it is on the other face from the last one counted.
     0 if the blade came within 2 cm of the gripper holding the steel or passed the guard, if the edge was on the
     steel at more than 30 degrees for 0.15 s, or if the scale rose 90 g during a stroke.
     Otherwise 0.25 for two counted strokes; 0.5 for eight; 0.75 if, as well, the knife lies flat on the board and the
@@ -374,6 +396,7 @@ def report(objects) -> dict:
     s = _STATE
     return {"score": score(objects), "lot": LOT, "void": s["void"], "counted_strokes": s["counted"],
             "strokes": list(s["strokes"]), "in_stroke": s["now"] is not None, "scale_g": s["grams"],
+            "edge_force_n": s["force_n"], "contact_share": s.get("contact_share"),
             "peak_rise_g": s["peak_g"], "nearest_to_steel_hand_mm": s["nearest_hand_mm"], "knife_down": s["knife_down"],
             "steel_down": s["steel_down"], "edge_away": s["edge_away"], "let_go": s["let_go"], "at_rest": s["still"]}
 

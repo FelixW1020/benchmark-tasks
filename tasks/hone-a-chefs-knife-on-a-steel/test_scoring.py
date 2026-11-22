@@ -42,14 +42,15 @@ def knife_on(T, face, s, z, out=0.0, alpha=17.0, phi=25.0):
     return c - rot @ np.array([s, float(K.edge_y(s)), 0.0]), K._quat(rot)
 
 
-def stroke(T, s, face, s0=0.02, s1=0.185, z0=0.20, z1=0.07, alpha=17.0, grams=12.0, n=40, arms=None):
-    """Feed one stroke, then four steps off the steel."""
+def stroke(T, s, face, s0=0.02, s1=0.185, z0=0.20, z1=0.07, alpha=17.0, grams=12.0, n=40, arms=None, force=1.0, out=0.0):
+    """Feed one stroke (the simulator reporting ``force`` newtons between blade and rod), then four steps off the steel."""
     st = steel_up(T)
     for k in range(n + 1):
         f = k / n
-        T.advance(s, knife_on(T, face, s0 + f * (s1 - s0), z0 + f * (z1 - z0), alpha=alpha), st, grams, arms or FAR, REST)
+        T.advance(s, knife_on(T, face, s0 + f * (s1 - s0), z0 + f * (z1 - z0), out=out, alpha=alpha), st, grams, arms or FAR, REST,
+                  force)
     for _ in range(4):
-        T.advance(s, knife_on(T, face, s1, z1, out=0.03, alpha=alpha), st, 0.0, arms or FAR, REST)
+        T.advance(s, knife_on(T, face, s1, z1, out=0.03, alpha=alpha), st, 0.0, arms or FAR, REST, 0.0)
     return s
 
 
@@ -120,6 +121,56 @@ def test_same_face_twice_counts_once(T):
     assert T.score_from(False, s["counted"], True, True, True, True, True) == 0.0
 
 
+def test_no_contact_force_no_stroke(T):
+    """The edge where a stroke would have it, but nothing pressing: not on the steel."""
+    s = stroke(T, T.new_state(), 1, force=0.0)
+    assert s["counted"] == 0 and not s["strokes"]
+    s = stroke(T, T.new_state(), 1, force=T.LOADED_N / 2)
+    assert s["counted"] == 0 and not s["strokes"]
+
+
+def test_hovering_half_a_millimetre_off_counts_nothing(T):
+    """A whole pass with the edge 0.5 mm clear of the rod: the simulator reports no contact, so nothing counts."""
+    s = stroke(T, T.new_state(), 1, out=0.0005, force=0.0)
+    assert s["counted"] == 0 and not s["strokes"] and not s["void"]
+
+
+def test_a_gap_in_the_contact_splits_the_stroke(T):
+    """Contact lost for one control step in the middle: two short spells, neither a stroke."""
+    s, st = T.new_state(), steel_up(T)
+    for k in range(41):
+        f = k / 40
+        T.advance(s, knife_on(T, 1, 0.02 + f * 0.165, 0.20 - f * 0.13), st, 12.0, FAR, REST, 0.0 if k == 20 else 1.0)
+    T.advance(s, knife_on(T, 1, 0.185, 0.07, out=0.03), st, 0.0, FAR, REST, 0.0)
+    assert len(s["strokes"]) == 2 and s["counted"] == 0
+    assert "tip" in s["strokes"][0]["why"] and "heel" in s["strokes"][1]["why"]
+
+
+def test_tip_to_heel_does_not_count(T):
+    """The same contact run backwards (tip to heel, up the steel) covers the same ground and is not a stroke."""
+    s = stroke(T, T.new_state(), 1, s0=0.185, s1=0.02, z0=0.07, z1=0.20)
+    k = s["strokes"][0]
+    assert s["counted"] == 0 and not k["valid"]
+    assert "heel" in k["why"] and "back toward the heel" in k["why"] and "back up the steel" in k["why"]
+
+
+def test_heel_to_tip_but_up_the_steel_does_not_count(T):
+    s = stroke(T, T.new_state(), 1, z0=0.07, z1=0.20)
+    assert s["counted"] == 0 and "back up the steel" in s["strokes"][0]["why"]
+
+
+def test_sawing_back_and_forth_does_not_count(T):
+    """Heel to tip with a 3 cm step back toward the heel on the way: the extremes look right, the order does not."""
+    s, st = T.new_state(), steel_up(T)
+    path = [(0.02 + 0.10 * k / 20, 0.20 - 0.08 * k / 20) for k in range(21)]
+    path += [(0.12 - 0.03 * k / 6, 0.12) for k in range(1, 7)]
+    path += [(0.09 + 0.095 * k / 20, 0.12 - 0.05 * k / 20) for k in range(1, 21)]
+    for sv, zv in path:
+        T.advance(s, knife_on(T, 1, sv, zv), st, 12.0, FAR, REST, 1.0)
+    T.advance(s, knife_on(T, 1, 0.185, 0.07, out=0.03), st, 0.0, FAR, REST, 0.0)
+    assert s["counted"] == 0 and "back toward the heel" in s["strokes"][0]["why"]
+
+
 def test_middle_only_is_not_a_stroke(T):
     s = stroke(T, T.new_state(), 1, s0=0.06, s1=0.14)
     assert s["counted"] == 0 and "heel" in s["strokes"][0]["why"] and "tip" in s["strokes"][0]["why"]
@@ -147,7 +198,7 @@ def test_scale_rise_is_from_the_reading_before_the_stroke(T):
     s = T.new_state()
     st = steel_up(T)
     for _ in range(3):
-        T.advance(s, knife_on(T, 1, 0.02, 0.20, out=0.03), st, 300.0, FAR, REST)      # the steel hand leaning on the board
+        T.advance(s, knife_on(T, 1, 0.02, 0.20, out=0.03), st, 300.0, FAR, REST, 0.0)      # the steel hand leaning on the board
     stroke(T, s, 1, grams=320.0)
     assert s["counted"] == 1 and abs(s["strokes"][0]["rise_g"] - 20.0) < 1.0
 
@@ -165,9 +216,9 @@ def test_steel_must_stand_on_the_pad(T):
     for k in range(41):
         f = k / 40
         pos, q = knife_on(T, 1, 0.02 + f * 0.165, 0.20 - f * 0.13)
-        T.advance(s, (pos + np.array([0.10, 0.0, 0.0]), q), off, 12.0, FAR, REST)
+        T.advance(s, (pos + np.array([0.10, 0.0, 0.0]), q), off, 12.0, FAR, REST, 1.0)
     for _ in range(4):
-        T.advance(s, T.knife_start(), off, 0.0, FAR, REST)
+        T.advance(s, T.knife_start(), off, 0.0, FAR, REST, 0.0)
     assert s["counted"] == 0 and "upright" in s["strokes"][0]["why"]
 
 
@@ -249,10 +300,20 @@ def test_layout(T):
 
 def test_scoring_text_matches_constants(T):
     doc = T.score.__doc__
-    for word in ("1 mm", "3 cm", "10 to 25 degrees", "5 cm", "15 degrees", "30 g", "90 g", "2 cm", "30 degrees", "eight"):
+    for word in ("0.02 N", "first control step", "3 cm", "1.5 cm", "10 to 25 degrees", "5 cm", "15 degrees", "30 g", "90 g", "2 cm",
+                 "30 degrees", "eight"):
         assert word in doc, word
-    assert (T.TOUCH, T.NEAR_END, T.ANGLE, T.TRAVEL, T.UPRIGHT, T.LIGHT_G, T.HEAVY_G, T.HAND_NEAR, T.STEEP, T.EACH) == \
-        (0.001, 0.03, (10.0, 25.0), 0.05, 15.0, 30.0, 90.0, 0.02, 30.0, 4)
+    assert (T.LOADED_N, T.BREAK, T.BACKTRACK, T.NEAR_END, T.ANGLE, T.TRAVEL, T.UPRIGHT, T.LIGHT_G, T.HEAVY_G, T.HAND_NEAR, T.STEEP,
+            T.EACH) == (0.02, 1, 0.015, 0.03, (10.0, 25.0), 0.05, 15.0, 30.0, 90.0, 0.02, 30.0, 4)
+
+
+def test_demo_grips_within_the_real_gripper(T):
+    """The demo's grip commands keep each finger at or under 40 N (finger drive 5 N per mm of shortfall, both sides)."""
+    import demo as D
+
+    per_mm = 5.0
+    assert per_mm * 1000 * (T.K.HANDLE_T - D.KNIFE_GAP) / 2 <= 40.0
+    assert per_mm * 1000 * (0.026 - D.STEEL_GAP) / 2 <= 40.0
 
 
 # -- task.json -----------------------------------------------------------------------------------------------------------
