@@ -34,6 +34,7 @@ import numpy as np
 
 CONTROL_HZ = 20
 FULL_OPEN = 0.0939                 # m between the pads at grip command 1.0
+JOINT_K = np.array([80.0, 80.0, 80.0, 10.0, 10.0, 10.0])   # N m/rad: the arm joints' position gains (yam_arena constants)
 
 
 def frame(approach, closing) -> np.ndarray:
@@ -61,8 +62,24 @@ class Hand:
         self.q = np.array(READY, float)
         self.grip = 1.0
         self.pos, self.rot = ik.tcp_pose(self.q, self.base)
+        self.push = np.zeros(3)             # N, world: the force this hand is to hold on what it touches
         self.cmd = np.r_[self.q, self.grip]
         self.worst_mm = self.worst_deg = 0.0
+
+    def lean(self) -> np.ndarray:
+        """The joint angles to command so that the joints' springs hold ``push`` at the tool point: the pose's own
+        angles plus (Jacobian transpose times the force) over each joint's stiffness."""
+        if not np.any(self.push):
+            return self.q
+        from yam_arena import ik
+
+        p0 = np.asarray(ik.tcp_pose(self.q, self.base)[0], float)
+        jac = np.zeros((3, 6))
+        for i in range(6):
+            dq = self.q.copy()
+            dq[i] += 1e-4
+            jac[:, i] = (np.asarray(ik.tcp_pose(dq, self.base)[0], float) - p0) / 1e-4
+        return np.clip(self.q + (jac.T @ self.push) / JOINT_K, ik.LOWER, ik.UPPER)
 
     def _solve(self, pos, rot) -> None:
         from yam_arena import ik
@@ -71,7 +88,7 @@ class Hand:
         self.q, self.pos, self.rot = q, np.asarray(pos, float), rot
         self.worst_mm = max(self.worst_mm, pe * 1000)
         self.worst_deg = max(self.worst_deg, float(np.degrees(re)))
-        self.cmd = np.r_[q, self.grip]
+        self.cmd = np.r_[self.lean(), self.grip]
 
     def move(self, pos, duration: float, rot=None, grip: float | None = None):
         """Generator: go in a straight line to ``pos`` (world, tool point) and ``rot``; ``grip`` 1 open .. 0 closed."""
@@ -95,7 +112,7 @@ class Hand:
         n = max(1, round(duration * CONTROL_HZ))
         for k in range(1, n + 1):
             self.grip = g0 + ik.smoothstep(k / n) * (grip - g0)
-            self.cmd = np.r_[self.q, self.grip]
+            self.cmd = np.r_[self.lean(), self.grip]
             yield
 
     def move_joints(self, q_goal, duration: float, grip: float | None = None):
@@ -109,7 +126,7 @@ class Hand:
             s = ik.smoothstep(k / n)
             self.q, self.grip = q0 + s * (np.asarray(q_goal, float) - q0), g0 + s * (g1 - g0)
             self.pos, self.rot = ik.tcp_pose(self.q, self.base)
-            self.cmd = np.r_[self.q, self.grip]
+            self.cmd = np.r_[self.lean(), self.grip]
             yield
 
 
@@ -180,16 +197,18 @@ def turned(w) -> np.ndarray:
 
 class Sag:
     """Slowly offsets a hand's command by its measured error, in place and in attitude, so that its tool point and
-    its fingers end up where they are wanted under load."""
+    its fingers end up where they are wanted under load. ``cap`` limits the offset along each world axis (m): a hand
+    that grips a part held by something else must not wind up against it."""
 
-    def __init__(self, hand):
+    def __init__(self, hand, cap=(BIAS_MAX, BIAS_MAX, BIAS_MAX)):
         self.hand, self.bias, self.want = hand, np.zeros(3), None
         self.turn, self.rot = np.zeros(3), None
+        self.cap = np.asarray(cap, float)
 
     def to(self, pos, rot):
         name = self.hand.name
         if self.want is not None:
-            self.bias = np.clip(self.bias + GAIN * (self.want - TOOL[name]), -BIAS_MAX, BIAS_MAX)
+            self.bias = np.clip(self.bias + GAIN * (self.want - TOOL[name]), -self.cap, self.cap)
             have = ROT.get(name)
             if have is not None and self.rot is not None:
                 err = rotvec(self.rot @ np.asarray(have, float).T)          # from where the hand is to where it is wanted
@@ -200,6 +219,15 @@ class Sag:
                         self.turn *= TURN_MAX / size
         self.want, self.rot = np.asarray(pos, float), np.asarray(rot, float)
         self.hand._solve(self.want + self.bias, turned(self.turn) @ self.rot)
+
+    def ease(self, seconds: float):
+        """Generator: let the offsets go, in place (before a hand lets go of something that is now held elsewhere)."""
+        n = max(1, round(seconds * CONTROL_HZ))
+        b0, t0 = self.bias.copy(), self.turn.copy()
+        for k in range(1, n + 1):
+            self.bias, self.turn = b0 * (1.0 - k / n), t0 * (1.0 - k / n)
+            self.hand._solve(self.want + self.bias, turned(self.turn) @ self.rot)
+            yield
 
 
 def glide(sag, target, seconds: float, rot):
@@ -216,7 +244,17 @@ def glide(sag, target, seconds: float, rot):
 
 LEVER = 0.200                            # the left hand takes the handle this far out from the pipe's axis
 TCP_BACK = 0.003                         # the tool point is this far short of the bar's middle (toward the robot's side)
-BAR_GAP = 0.019                          # the pads are sent to this gap on the 25 mm bar (3 mm of squeeze a side)
+BAR_GAP = 0.008                          # the pads are sent to this gap on the 25 mm bar (a firm pinch, about 40 N a pad)
+LEVER_R = 0.352                          # the right hand's closed fingertips push the bar this far out, beyond the hasp
+SHARE_R = 0.80                           # the share of the seal's torque that the right hand's push carries
+PUSH_FROM = 22.0                         # degrees from locked at which the right hand joins, before the seal is met
+HANDLE_UP = 5.4                          # N: the lifted handle's weight on the left hand
+REST = 0.8                               # degrees from locked at which the seated handle rests against the hasp's lip
+OVER = 0.1                               # degrees from locked at which the lifted handle is let down: between the hasp's face and its lip
+CAP_HELD = (0.060, 0.012, 0.030)         # m: how far the gripping hand may offset its command along x, y, z while it holds the handle
+CAP_PUSH = (0.020, 0.012, 0.030)         # ... and the pushing hand
+TIP_PAST = 0.013                         # the closed fingertips' end, ahead of the tool point (yam_arena constants)
+R_CLOSE = __import__("os").environ.get("DOOR_RCLOSE", "along")   # the pushing hand's finger axis: along the bar, or up
 UP_SIGN = float(__import__("os").environ.get("DOOR_UP", "1"))   # which finger is above the bar (+1: the tool's x up)
 LIFT = 4.5                               # degrees the handle is lifted to clear the hasp's lip
 LIFT_AT = 8.0                            # ... from this many degrees short of locked
@@ -252,6 +290,77 @@ def stay(sag, T, a, seconds: float):
         yield
 
 
+def push_at(T, theta: float, lift: float, back: float = 0.0):
+    """The right hand's tool point and attitude with its closed fingertips on the bar's outer face, out near the tip."""
+    p, into, up, along = T.K.grip_pose(T.door_pos(), theta, lift, LEVER_R)
+    return p - (T.K.BAR_T / 2 + TIP_PAST + back) * into, frame(into, along if R_CLOSE == "along" else up)
+
+
+def seal_load(T, theta: float, lift: float, scale: float = 1.0):
+    """The forces (world, N) the left and the right hand hold on the handle against the door's seal at ``theta``:
+    the fixture's stated spring (and the rod's drag) shared between them, and the lifted handle's weight on the left."""
+    torque = scale * (T.K.seal_torque(theta) + T.K.ROD_DRAG)
+    _, into, _, _ = T.K.grip_pose(T.door_pos(), theta, lift, LEVER)
+    fl = (1.0 - SHARE_R) * torque / LEVER * into
+    if lift > 0.3:
+        fl = fl + np.array([0.0, 0.0, HANDLE_UP])
+    return fl, SHARE_R * torque / LEVER_R * into
+
+
+def sweep2(ls, rs, T, a0, a1, seconds: float, k0: float = 1.0, k1: float = 1.0):
+    """Generator: both hands take the handle from (theta, lift) ``a0`` to ``a1``, each holding its share of the
+    seal's push-back (scaled from ``k0`` to ``k1``)."""
+    from yam_arena import ik
+
+    n = max(1, round(seconds * CONTROL_HZ))
+    for k in range(1, n + 1):
+        s = ik.smoothstep(k / n)
+        th, li = a0[0] + s * (a1[0] - a0[0]), a0[1] + s * (a1[1] - a0[1])
+        ls.hand.push, rs.hand.push = seal_load(T, th, li, k0 + s * (k1 - k0))
+        ls.to(*hold(T, th, li))
+        rs.to(*push_at(T, th, li))
+        yield
+
+
+def join_push(T, right, ls):
+    """The right hand, fingers closed, comes up behind the handle's tip while the left hand holds the handle still."""
+    a = (PUSH_FROM, 0.0)
+    pre, rot = push_at(T, PUSH_FROM, 0.0, back=0.060)
+    yield from together(stay(ls, T, a, 2.5), right.move_joints(best_ik(right, pre, rot), 2.5, grip=0.0))
+    rs = Sag(right)
+    yield from together(stay(ls, T, a, 0.3), glide(rs, pre, 0.3, rot))
+    yield from together(stay(ls, T, a, 1.0), glide(rs, push_at(T, PUSH_FROM, 0.0, back=0.002)[0], 1.0, rot))
+    rs.cap = np.asarray(CAP_PUSH, float)
+    rs.bias = np.clip(rs.bias, -rs.cap, rs.cap)
+    return rs
+
+
+def leave_push(T, right, rs, theta: float):
+    """The right hand draws straight back from the bar."""
+    right.push = np.zeros(3)
+    pos, rot = push_at(T, theta, 0.0, back=0.070)
+    yield from glide(rs, pos, 1.0, rot)
+
+
+def seat_handle2(T, left, right, ls, lift: bool = True):
+    """Both hands: swing the handle in against the seal, lift it over the hasp's lip, carry it in between the lip and
+    the hasp's face, let it down into its seat and ease off until the lip holds it."""
+    yield from sweep(ls, T, (T.THETA_START, 0.0), (PUSH_FROM, 0.0), 3.0)
+    ls.cap = np.asarray(CAP_HELD, float)
+    ls.bias = np.clip(ls.bias, -ls.cap, ls.cap)
+    rs = yield from join_push(T, right, ls)
+    up = LIFT if lift else 0.0
+    yield from sweep2(ls, rs, T, (PUSH_FROM, 0.0), (LIFT_AT, 0.0), 2.5)
+    yield from sweep2(ls, rs, T, (LIFT_AT, 0.0), (LIFT_AT, up), 1.2)
+    yield from sweep2(ls, rs, T, (LIFT_AT, up), (OVER, up), 2.0)
+    yield from sweep2(ls, rs, T, (OVER, up), (OVER, up), 0.6)
+    yield from sweep2(ls, rs, T, (OVER, up), (OVER, -0.5), 1.2)
+    yield from sweep2(ls, rs, T, (OVER, -0.5), (OVER, -0.5), 0.6)
+    yield from sweep2(ls, rs, T, (OVER, -0.5), (REST, -0.5), 1.5, 1.0, 0.0)      # ease off: the lip takes the seal's push
+    left.push = np.zeros(3)
+    yield from together(chain(stay(ls, T, (REST, -0.5), 0.4), ls.ease(0.6)), leave_push(T, right, rs, REST))
+
+
 def take_handle(T, left):
     """The left hand closes on the handle where it hangs."""
     t0 = T.THETA_START
@@ -267,6 +376,7 @@ def take_handle(T, left):
 
 def let_go(T, left, s, theta: float):
     """The left hand opens and draws straight back from the handle."""
+    yield from s.ease(0.4)
     yield from left.set_grip(gap(0.060), 0.6)
     yield from wait(0.3)
     pos, rot = hold(T, theta, 0.0, back=0.060)
@@ -341,16 +451,17 @@ def script(T, left, right, mode: str = "full", idle_s: float = 45.0):
         yield from go_home(right)
     ls = yield from take_handle(T, left)
     if mode in ("cam", "false"):
-        yield from sweep(ls, T, (T.THETA_START, 0.0), (10.0, 0.0), 4.0)
-        yield from stay(ls, T, (10.0, 0.0), 0.5)
-        yield from let_go(T, left, ls, 10.0)
+        # control: the handle is swung in until the cam has its pin, short of the seal, and let go there
+        yield from sweep(ls, T, (T.THETA_START, 0.0), (20.0, 0.0), 4.0)
+        yield from stay(ls, T, (20.0, 0.0), 0.5)
+        yield from let_go(T, left, ls, 20.0)
         yield from go_home(left)
         yield from wait(3.0)
         return
-    yield from seat_handle(T, left, ls, lift=mode != "nolift")
-    yield from let_go(T, left, ls, 0.0)
+    yield from seat_handle2(T, left, right, ls, lift=mode != "nolift")
+    yield from let_go(T, left, ls, REST)
     if mode in ("seat", "nolift"):
-        yield from go_home(left)
+        yield from together(go_home(left), go_home(right))
         yield from wait(3.0)
         return
     yield from together(go_home(left), flip_keeper(T, right, stay_by=mode == "held"))
@@ -453,7 +564,8 @@ def run(task_path: str, out_dir: str, max_steps: int = 900, record: bool = True,
             break
         if ended is not None and steps - ended >= hold_s * CONTROL_HZ:
             break
-    result = {"lot": T.LOT, "mode": mode, "task_score": 1.0 if success else float(info.get("score", 0.0) or 0.0),
+    result = {"lot": T.LOT, "mode": mode, "seal_n_m": float(T.K.SEAL_MAX),
+              "task_score": 1.0 if success else float(info.get("score", 0.0) or 0.0),
               "success": success, "steps": steps, "script_steps": ended,
               "worst_ik": {h.name: {"mm": round(h.worst_mm, 2), "deg": round(h.worst_deg, 2)} for h in (left, right)},
               "start": start, "end": {"task": T.report(states()), "places": places(states())}, "trace": trace}

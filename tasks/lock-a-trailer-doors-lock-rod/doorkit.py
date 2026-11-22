@@ -36,6 +36,7 @@ from __future__ import annotations
 import importlib.abc
 import importlib.util
 import math
+import os
 import sys
 from dataclasses import dataclass, field
 
@@ -95,8 +96,10 @@ PIN_Z = (0.012, 0.048)
 CAM_IN = 25.0                 # the cam has hold of the pin when the rod is within this many degrees of locked
 # -- the door's seal, as a spring on the rod ------------------------------------------------------------------------------
 SEAL_FROM = 15.0              # degrees from locked at which the cam starts to draw the door onto its seal (an estimate)
-SEAL_MAX = 0.40               # N m pushing the rod back at locked (an estimate; a loaded trailer door takes far more)
-ROD_DRAG = 0.03               # N m of friction in the pipe guides (an estimate)
+SEAL_MAX = float(os.environ.get("DOOR_SEAL", "20.0"))   # N m pushing the rod back at locked: a calculated estimate for a
+#                               trailer door in good order (README, "The handle's resistance"); not a measurement
+SEAL_DAMP = 0.4               # N m s/rad lost in the rubber while the cam is on the seal (an estimate)
+ROD_DRAG = 0.3                # N m of friction in the pipe guides and at the cams (an estimate)
 LIFT_DRAG = 0.01              # N m in the handle's pin (an estimate)
 KEEP_DRAG = 0.0005            # N m in the keeper's pin (an estimate)
 KEEP_DAMP = 3.0               # 1/s: the keeper's swing dies away in its pin (an estimate)
@@ -704,7 +707,8 @@ def _wrench(environment, name: str, torque_world, lift: float = 0.0) -> None:
 
 
 def _rule(environment) -> None:
-    """The kit's one force law, applied for the coming control step: the door seal's push-back on each rod."""
+    """The kit's one force law, applied for the coming control step: the door seal's push-back on each rod, a spring
+    with a little loss in it."""
     for rod in (n for n, s in _SPECS.items() if isinstance(s, Rod) and n in _PATHS):
         try:
             _, rq = _rel(environment, rod)
@@ -712,7 +716,15 @@ def _rule(environment) -> None:
             continue
         r = _rotation(rq)
         theta = -math.degrees(math.atan2(r[1, 0], r[0, 0]))
-        _wrench(environment, rod, (0.0, 0.0, -seal_torque(theta)))
+        torque = -seal_torque(theta)
+        if theta < SEAL_FROM:
+            try:
+                asset = environment.unwrapped.scene[rod]
+                wz = float(_np(asset.data.root_vel_w)[0][5])
+                torque -= SEAL_DAMP * max(-5.0, min(5.0, wz))
+            except Exception:                        # noqa: BLE001
+                pass
+        _wrench(environment, rod, (0.0, 0.0, torque))
 
 
 def _local_bounds(spec) -> tuple:

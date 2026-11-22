@@ -222,6 +222,50 @@ def test_parts_do_not_overlap_the_fixture_at_the_ends(A):
     assert apart >= 0.001
 
 
+# -- the handle's resistance, and how the demo holds it --------------------------------------------------------------------
+def test_handle_resistance_is_the_stated_profile(A):
+    K = A.K
+    if "DOOR_SEAL" in os.environ:
+        pytest.skip("DOOR_SEAL overrides the seal's peak")
+    assert K.SEAL_MAX == pytest.approx(20.0) and K.SEAL_FROM == pytest.approx(15.0)
+    assert K.seal_torque(0.0) / K.TIP_R == pytest.approx(53.5, abs=0.5)       # N at the handle's free end, flat on the hasp
+    assert K.seal_torque(7.5) / K.TIP_R == pytest.approx(26.8, abs=0.5)
+    assert K.seal_torque(10.0) / K.TIP_R == pytest.approx(17.8, abs=0.5)
+    resting = math.degrees(math.asin((K.SLOT - K.BAR_T) / K.HASP_AT))          # seated, sprung out against the lip
+    assert K.seal_torque(resting) / K.HASP_AT == pytest.approx(64.0, abs=2.0)  # N on the lip
+    # the fixture's spring: a 10 cm arm on the pipe, 7.6 N/mm, pressed over the last 15 degrees
+    travel = 0.100 * math.radians(K.SEAL_FROM)
+    assert 7630.0 * travel * 0.100 == pytest.approx(K.SEAL_MAX, rel=0.02)
+
+
+def test_at_rest_is_judged_by_position_over_half_a_second(A):
+    still = [(0.7, 0.0, 0.1)] * (A.STILL_STEPS + 1)
+    assert A.at_rest(still)
+    assert not A.at_rest(still[:-1])                                            # not yet half a second of history
+    assert not A.at_rest(still[:-1] + [(1.3, 0.0, 0.1)])                        # the rod has turned 0.6 degrees
+    assert not A.at_rest(still[:-1] + [(0.7, 0.6, 0.1)])                        # the handle has lifted
+    assert not A.at_rest(still[:-1] + [(0.7, 0.0, 3.5)])                        # the keeper is still swinging
+    assert A.at_rest(still[:-1] + [(0.9, 0.2, 2.0)])
+    assert A.at_rest([(60.0, 0.0, 205.0)] * 3 + still)                          # only the last half second counts
+
+
+def test_demo_shares_the_seal_between_the_hands(A):
+    import demo as D
+
+    for theta in (12.0, 5.0, 0.1):
+        fl, fr = D.seal_load(A, theta, 0.0)
+        left, right = float(np.linalg.norm(fl)) * D.LEVER, float(np.linalg.norm(fr)) * D.LEVER_R
+        assert left + right == pytest.approx(A.K.seal_torque(theta) + A.K.ROD_DRAG, rel=1e-6)
+        assert right == pytest.approx(D.SHARE_R * (left + right))
+    fl, fr = D.seal_load(A, 0.1, 4.5)
+    assert fl[2] == pytest.approx(D.HANDLE_UP) and abs(fr[2]) < 1e-9
+    # the left hand's pinch: two pads at 5 N per mm of squeeze (at most 50 N), friction about 0.6 on the bar
+    pad = min(50.0, 5000.0 * (A.K.BAR_H - D.BAR_GAP) / 2)
+    assert float(np.linalg.norm(fl)) < 0.75 * 2 * 0.6 * pad
+    # the right hand's fingertips are on the bar beyond the hasp, short of its tip
+    assert A.K.HASP_AT + A.K.HASP_W / 2 + 0.008 < D.LEVER_R < A.K.TIP_R - 0.008
+
+
 # -- task.json -----------------------------------------------------------------------------------------------------------
 def test_task_json(A):
     path = HERE / "task.json"

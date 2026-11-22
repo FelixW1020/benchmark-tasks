@@ -51,8 +51,9 @@ SEAT_GAP = 0.006                  # in its seat: the bar's door-side face this c
 SEAT_RISE = 0.003                 # ... and its underside this close to the seat
 KEEP_DOWN = 10.0                  # degrees from hanging: the keeper is down
 CLEAR = 0.030                     # both grippers this far from the handle and the keeper
-STILL = 0.05                      # rad/s: the rod and the handle at rest
-KEEP_STILL = 0.3                  # rad/s: the keeper at rest
+STILL_STEPS = 10                  # at rest: over the last half second (10 control steps at 20 Hz) ...
+STILL = 0.5                       # ... the rod and the handle have each turned by no more than this many degrees
+KEEP_STILL = 3.0                  # ... and the keeper by no more than this many
 
 
 def door_pos() -> np.ndarray:
@@ -80,7 +81,7 @@ _STATE: dict = {}
 
 def _clear() -> None:
     _STATE.update(steps=0, theta=THETA_START, lift=0.0, flip=FLIP_START, cam=False, seated=False, down=False,
-                  released=False, still=False, gap=1.0, least_theta=THETA_START)
+                  released=False, still=False, gap=1.0, least_theta=THETA_START, hist=[])
 
 
 _clear()
@@ -89,6 +90,18 @@ _clear()
 def seated(theta_deg: float, lift_deg: float) -> bool:
     """The handle is in the hasp's seat: flat against the hasp's face (within 6 mm) and down (within 3 mm)."""
     return bool(K.seat_gap(theta_deg) <= SEAT_GAP and K.seat_rise(lift_deg) <= SEAT_RISE)
+
+
+def at_rest(hist: list) -> bool:
+    """Nothing has visibly moved in half a second: over the last ``STILL_STEPS`` control steps the rod and the handle
+    have each turned by at most ``STILL`` degrees and the keeper by at most ``KEEP_STILL`` (what two video frames half
+    a second apart show). Speeds are not used: a part pressed against a stop reports a jitter in speed while it stays
+    where it is."""
+    if len(hist) <= STILL_STEPS:
+        return False
+    h = np.asarray(hist[-(STILL_STEPS + 1):], float)
+    span = h.max(0) - h.min(0)
+    return bool(span[0] <= STILL and span[1] <= STILL and span[2] <= KEEP_STILL)
 
 
 def score_from(cam: bool, seated: bool, down: bool, released: bool, still: bool) -> float:
@@ -129,8 +142,8 @@ def _watch(environment) -> None:
     st["gap"] = min(K.segment_distance(hands, handle.pos, tip) - K.BAR_H / 2,
                     K.segment_distance(hands, keeper.pos, end) - K.KEEP_W / 2)
     st["released"] = bool(st["gap"] >= CLEAR)
-    st["still"] = bool(float(np.linalg.norm(rod.ang_vel)) < STILL and float(np.linalg.norm(handle.ang_vel)) < STILL
-                       and float(np.linalg.norm(keeper.ang_vel)) < KEEP_STILL)
+    st["hist"] = (st["hist"] + [(st["theta"], st["lift"], st["flip"])])[-(STILL_STEPS + 1):]
+    st["still"] = at_rest(st["hist"])
 
 
 # -- scoring --------------------------------------------------------------------------------------------------------
